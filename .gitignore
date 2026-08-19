@@ -1,0 +1,8 @@
+logs/
+outputs/
+__pycache__/
+*.pyc
+.venv/
+*.npz
+*.pt
+*.mp4
