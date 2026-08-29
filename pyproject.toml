@@ -5,6 +5,9 @@ description = "PPO cartpole balance + offline 16-step termination predictor (mjl
 requires-python = ">=3.10"
 dependencies = [
     "mjlab",
+    "scikit-learn",
+    "imageio[ffmpeg]",
+    "pillow",
 ]
 
 [dependency-groups]
