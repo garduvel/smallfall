@@ -1,5 +1,7 @@
 logs/
 outputs/
+checkpoints/
+archive/
 __pycache__/
 *.pyc
 .venv/
@@ -7,3 +9,4 @@ __pycache__/
 *.pt
 *.mp4
 *.zip
+colab_uploads/
