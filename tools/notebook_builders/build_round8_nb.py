@@ -19,7 +19,7 @@ Pre-registered in DEVIATIONS.md ("Gate 5/7 redo: round 8").
 4. Side-by-side demo video with the selected checkpoint.
 
 **One upload:** in step 2 select **all 7 files** in
-`/home/grgott537/cartpole-term/colab_uploads/round8/` (Ctrl+A).
+`colab_uploads/round8/` (Ctrl+A).
 Everything is copied to `MyDrive/cartpole_term_runs/round8/`; one results zip
 downloads at the end.
 """)

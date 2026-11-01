@@ -1,6 +1,6 @@
 """New, standalone script (phase-2, outside CLAUDE.md's cartpole-only
 spec, see DEVIATIONS.md). Feeds Gate 5 of the multi-robot plan
-(~/.claude/plans/snug-booping-gosling.md) -- the protective "small-fall"
+(the original design plan; decisions in DEVIATIONS.md) -- the protective "small-fall"
 policy's rollout-then-handoff initial-state mechanism needs "the real
 predictor-positive window measured in Gate 4", and this script is what
 measures it under a REAL live rollout rather than reading it off the

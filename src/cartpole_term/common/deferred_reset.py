@@ -1,5 +1,5 @@
 """Deferred-reset wrapper (Gate 5/6 infrastructure, multi-robot plan --
-~/.claude/plans/snug-booping-gosling.md). See DEVIATIONS.md for the full
+the original design plan). See DEVIATIONS.md for the full
 writeup; summary here.
 
 mjlab's default behaviour (`ManagerBasedRlEnvCfg.auto_reset=True`) resets a

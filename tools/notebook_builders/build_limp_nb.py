@@ -14,7 +14,7 @@ policies: the protective policy (round 8b, iteration 200), the walker
 continuing, and **limp** (motors off, zero torque at every joint). Pre-registered in DEVIATIONS.md ("Limp baseline").
 
 **One upload:** in step 2 select **all 5 files** in
-`/home/grgott537/cartpole-term/colab_uploads/limp_baseline/` (Ctrl+A).
+`colab_uploads/limp_baseline/` (Ctrl+A).
 """)
 md("## 1. Install (pinned), confirm GPU")
 code("""

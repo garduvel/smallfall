@@ -20,7 +20,7 @@ DEVIATIONS.md ("Statistical evaluation: analysis plan").
 4. Run the paired statistical tests and draw the box plots (one figure, four panels).
 
 **One upload:** in step 2 select **all 9 files** in
-`/home/grgott537/cartpole-term/colab_uploads/recovery_eval/` (Ctrl+A).
+`colab_uploads/recovery_eval/` (Ctrl+A).
 """)
 md("## 1. Install (pinned), confirm GPU")
 code("""

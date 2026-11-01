@@ -32,7 +32,10 @@ Rules from it that apply to all work here:
 Walker -> 150 N push -> fall predictor -> protective "small-fall" policy ->
 hand-off. Not covered by the spec; every decision and result is in
 `DEVIATIONS.md` (append-only, newest at the bottom) and summarized in
-`README.md` section 14. The plan is `~/.claude/plans/snug-booping-gosling.md`.
+`docs/PROJECT_NOTES.md` section 14; the five-run results are in
+`docs/GO1_MULTISEED_REPORT.md`. `README.md` is a short public overview.
+Older references to "README.md S<n>" (in `DEVIATIONS.md` and code comments)
+mean section `<n>` of `docs/PROJECT_NOTES.md`, the former README.
 
 - Code: `src/cartpole_term/{go1,protective,common}/`, `scripts/go1_*.py`,
   `scripts/robot_*.py`. G1 (`g1/`) is scaffolding only.

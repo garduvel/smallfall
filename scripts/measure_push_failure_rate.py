@@ -1,6 +1,6 @@
 """Gate 2 of the multi-robot inflicted-failure predictor + protective
-"small-fall" policy plan (phase-2, see DEVIATIONS.md; plan at
-/home/grgott537/.claude/plans/snug-booping-gosling.md).
+"small-fall" policy plan (phase-2, see DEVIATIONS.md; plan
+summarized there).
 
 Sweeps a grid of candidate push-perturbation configs against ONE real,
 fully-trained checkpoint (Gate 1's output -- no competence sweep, see the

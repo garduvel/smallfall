@@ -1,5 +1,5 @@
 """Reset event: literal fall-state injection for the protective "small-fall"
-task (Gate 5 of ~/.claude/plans/snug-booping-gosling.md).
+task (Gate 5 of the original design plan).
 
 The plan's original Gate 5 design chose a "rollout-then-handoff" init
 mechanism specifically BECAUSE literal state injection was believed to need

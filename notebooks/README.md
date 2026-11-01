@@ -16,6 +16,8 @@ Upload `cartpole_term_code.zip` (rebuild with `python3 tools/build_code_zip.py`)
 
 ## `archive/`: the runs that produced the recorded Go1 results
 
+(Local only: `notebooks/archive/` is not published in the repository.)
+
 Kept as the record of how each result in `DEVIATIONS.md` was produced. Their
 steps are all in `go1_end_to_end.ipynb`. Their upload folders were removed
 (every file was a copy); the inputs are under `checkpoints/` and `outputs/`.

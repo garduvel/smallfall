@@ -10,7 +10,7 @@ Fresh runtime, any GPU (T4 is fine). Only the demo video: the same fall three
 ways, side by side (walker alone | limp, motors off | hand-off to the protective
 policy); ~15 min.
 In step 2 select **all 6 files** in
-`/home/grgott537/cartpole-term/colab_uploads/demo_video/` (Ctrl+A). The
+`colab_uploads/demo_video/` (Ctrl+A). The
 protective checkpoint is whichever `round*_model_*.pt` file is in that folder.
 """)
 md("## 1. Install, confirm GPU")

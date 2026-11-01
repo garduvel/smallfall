@@ -1,5 +1,5 @@
 """Protective "small-fall" task for Go1 (Gate 5 of the multi-robot plan --
-~/.claude/plans/snug-booping-gosling.md). A new, short, fixed-length mjlab
+the original design plan). A new, short, fixed-length mjlab
 task whose reward makes a falling robot land compact and low-damage,
 instead of tumbling uncontrolled -- trained with the same mjlab+RSL-RL PPO
 stack as every other policy in this project (CLAUDE.md S12#1, extended to

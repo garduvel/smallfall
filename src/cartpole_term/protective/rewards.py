@@ -1,5 +1,5 @@
 """Reward terms for the protective "small-fall" task (Gate 5 of
-~/.claude/plans/snug-booping-gosling.md). See env_cfg.py's module
+the original design plan). See env_cfg.py's module
 docstring for the full grounding/citation writeup; summary here.
 
 **Citation correction, made this session:** earlier code (and the plan
