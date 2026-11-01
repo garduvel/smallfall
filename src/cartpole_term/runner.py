@@ -29,6 +29,25 @@ statistics are NOT affected by this -- those are computed per-env from the
 `dones`/`truncated` tensors returned by step(), which are accurate
 regardless of auto-reset, and are strictly scoped to each env's first
 episode via the `active` mask.
+
+Phase-2 generalization (outside CLAUDE.md's cartpole-only spec, see
+DEVIATIONS.md): the cartpole gated pipeline never constructs this runner via
+mjlab's `train` CLI subprocess -- scripts/train.py always constructs
+runner_cls(...) directly (CLAUDE.md S2.9's "in-process training must
+construct the runner directly" note) -- so there is no fixed-signature
+constraint forcing env-cfg/task-id to be hardcoded here. `FrozenEvalRunner`
+therefore accepts an optional `env_cfg_factory`/`task_id`/
+`extra_scalar_metric_fn` triple, all keyword-only and all defaulting to
+exactly cartpole's current values, so every existing cartpole call site
+(none of which pass these) is byte-for-byte unaffected. A second task (e.g.
+Go1 velocity) passes its own factory/id/metric-fn instead of subclassing.
+The termination-cause breakdown itself was ALREADY task-agnostic in
+mechanism (it walks extras["log"] by key) but had cartpole's two cause names
+hardcoded as the only keys it would ever look for; that dict is now
+discovered dynamically from whatever "Episode_Termination/<cause>" keys
+actually appear in `log`, which is a strict generalization -- for cartpole
+this still finds exactly {"pole_angle", "cart_pos", "time_out"}, same as
+before.
 """
 
 from __future__ import annotations
@@ -74,6 +93,8 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
         eval_num_envs: int = EVAL_NUM_ENVS_DEFAULT,
         eval_interval: int = EVAL_INTERVAL_DEFAULT,
         early_stop_patience: int | None = None,
+        env_cfg_factory=None,
+        extra_scalar_metric_fn=None,
     ) -> None:
         """early_stop_patience: not part of CLAUDE.md S6 -- a project-level
         addition (see DEVIATIONS.md, gate 5). If set, `learn()` stops early
@@ -81,7 +102,18 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
         mean_action.mean_episode_length at the env's max_episode_length
         (i.e. the policy is reliably surviving full episodes), rather than
         running out num_learning_iterations regardless. None (default)
-        disables this -- matches stock behaviour."""
+        disables this -- matches stock behaviour.
+
+        env_cfg_factory / extra_scalar_metric_fn: phase-2 generalization
+        hooks (see module docstring), both keyword-only and both defaulting
+        to cartpole's own values when omitted -- existing cartpole call
+        sites are unaffected. env_cfg_factory(play: bool) must build the
+        SAME dynamics/terminations/reward as the training env (CLAUDE.md
+        S6.2.2). extra_scalar_metric_fn(obs) -> (name, per_env_tensor) | None
+        is an optional bonus scalar accumulated (masked by `active`) over
+        the eval rollout, same role as cartpole's mean_abs_cart_pos
+        (CLAUDE.md S2.6 ablation support); None means no extra metric.
+        """
         super().__init__(env, train_cfg, log_dir, device)
         self.eval_num_envs = eval_num_envs
         self.eval_interval = eval_interval
@@ -93,6 +125,23 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
         self._eval_env_build_info: dict | None = None
         self._consecutive_maxed_evals = 0
         self._should_stop_early = False
+        self._env_cfg_factory = env_cfg_factory or self._default_env_cfg_factory
+        self._extra_scalar_metric_fn = (
+            extra_scalar_metric_fn if extra_scalar_metric_fn is not None else self._default_extra_scalar_metric_fn
+        )
+
+    @staticmethod
+    def _default_env_cfg_factory(play: bool = False):
+        from cartpole_term.env_cfg import cartpole_balance_term_env_cfg
+
+        return cartpole_balance_term_env_cfg(play=play)
+
+    @staticmethod
+    def _default_extra_scalar_metric_fn(obs):
+        # CLAUDE.md S2.6 ablation: mean |cart position|, read from
+        # obs["actor"][:, 0] (cart_pos) BEFORE env.step() each iteration --
+        # see the long comment in _run_eval_rollout for why pre-step.
+        return "mean_abs_cart_pos", obs["actor"][:, 0].abs()
 
     # ------------------------------------------------------------------
     # Training loop: rsl_rl's OnPolicyRunner.learn(), verbatim, plus one
@@ -174,10 +223,8 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
     # Frozen evaluation.
     # ------------------------------------------------------------------
     def _build_eval_env(self) -> "_EnvType":
-        from cartpole_term.env_cfg import cartpole_balance_term_env_cfg
-
         t0 = time.time()
-        eval_cfg = cartpole_balance_term_env_cfg(play=False)  # NOT play_env_cfg: S6.2.2
+        eval_cfg = self._env_cfg_factory(play=False)  # NOT play_env_cfg: S6.2.2
         eval_cfg.scene.num_envs = self.eval_num_envs
         raw_env = ManagerBasedRlEnv(cfg=eval_cfg, device=self.device)
         wrapped = RslRlVecEnvWrapper(raw_env, clip_actions=self.cfg["clip_actions"])
@@ -241,11 +288,20 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
 
         mean_len = results["mean"]["mean_episode_length"]
         sampled_len = results["sampled"]["mean_episode_length"]
-        mean_abs_x = results["mean"]["mean_abs_cart_pos"]
+        extra_bits = ""
+        if self._extra_scalar_metric_fn is not None:
+            for k, v in results["mean"].items():
+                if k in (
+                    "num_episodes", "mean_episode_length", "median_episode_length",
+                    "se_episode_length", "censored_fraction", "mean_return",
+                    "termination_cause_breakdown", "termination_cause_counts_raw",
+                ):
+                    continue
+                extra_bits += f"{k}={v:.3f} " if isinstance(v, (int, float)) else f"{k}={v} "
         print(
             f"[frozen-eval] it={iteration} mean_action_len={mean_len:.1f} "
             f"sampled_action_len={sampled_len:.1f} "
-            f"mean_abs_cart_pos={mean_abs_x:.3f} "
+            f"{extra_bits}"
             f"censored_frac={results['mean']['censored_fraction']:.3f} "
             f"causes={results['mean']['termination_cause_breakdown']}"
         )
@@ -291,17 +347,20 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
         recorded_return = torch.zeros(num_envs)
         recorded_truncated = torch.zeros(num_envs, dtype=torch.bool)
 
-        cause_totals = {"pole_angle": 0.0, "cart_pos": 0.0, "time_out": 0.0}
-        # CLAUDE.md S2.6 ablation: mean |cart position| over the eval
-        # rollout. Read from `obs["actor"][:, 0]` (cart_pos, joint_pos_rel
-        # -- numerically == absolute joint_pos for this task, since the
-        # balance default is 0.0, same reasoning as S3.2.2) BEFORE calling
-        # env.step() each iteration, i.e. the state the policy is actually
-        # acting from -- not a post-step query, which scripts/
-        # inspect_reset_behavior.py showed is contaminated by auto-reset
-        # for envs that terminate that step.
-        cart_pos_abs_sum = 0.0
-        cart_pos_abs_count = 0
+        # Discovered dynamically from whatever "Episode_Termination/<cause>"
+        # keys actually appear in extras["log"] (phase-2 generalization, see
+        # module docstring) -- for cartpole this still finds exactly
+        # {"pole_angle", "cart_pos", "time_out"}.
+        cause_totals: dict[str, float] = {}
+        # Extra bonus scalar (CLAUDE.md S2.6 ablation support for cartpole;
+        # see _default_extra_scalar_metric_fn / module docstring). Read
+        # BEFORE calling env.step() each iteration, i.e. the state the
+        # policy is actually acting from -- not a post-step query, which
+        # scripts/inspect_reset_behavior.py showed is contaminated by
+        # auto-reset for envs that terminate that step.
+        extra_metric_name: str | None = None
+        extra_metric_sum = 0.0
+        extra_metric_count = 0
 
         max_steps = int(env.max_episode_length)
         with torch.inference_mode():
@@ -309,8 +368,13 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
                 if not bool(active.any()):
                     break
 
-                cart_pos_abs_sum += float((obs["actor"][:, 0].abs() * active.float()).sum().item())
-                cart_pos_abs_count += int(active.sum().item())
+                if self._extra_scalar_metric_fn is not None:
+                    metric = self._extra_scalar_metric_fn(obs)
+                    if metric is not None:
+                        name, per_env_value = metric
+                        extra_metric_name = name
+                        extra_metric_sum += float((per_env_value * active.float()).sum().item())
+                        extra_metric_count += int(active.sum().item())
 
                 actions = self.alg.actor(obs, stochastic_output=stochastic_output)
                 obs, rewards, dones, extras = env.step(actions)
@@ -333,8 +397,10 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
                     active = active & ~dones
 
                 log = extras.get("log", {})
-                for cause in cause_totals:
-                    cause_totals[cause] += float(log.get(f"Episode_Termination/{cause}", 0.0))
+                for key, val in log.items():
+                    if key.startswith("Episode_Termination/"):
+                        cause = key[len("Episode_Termination/") :]
+                        cause_totals[cause] = cause_totals.get(cause, 0.0) + float(val)
 
         if bool(active.any()):
             remaining = int(active.sum())
@@ -362,19 +428,19 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
             else dict.fromkeys(cause_totals, 0.0)
         )
 
-        return {
+        result = {
             "num_episodes": n,
             "mean_episode_length": mean_len,
             "median_episode_length": median_len,
             "se_episode_length": se_len,
             "censored_fraction": censored_fraction,
             "mean_return": mean_return,
-            "mean_abs_cart_pos": (
-                cart_pos_abs_sum / cart_pos_abs_count if cart_pos_abs_count > 0 else None
-            ),
             "termination_cause_breakdown": cause_fractions,
             "termination_cause_counts_raw": dict(cause_totals),
         }
+        if extra_metric_name is not None:
+            result[extra_metric_name] = extra_metric_sum / extra_metric_count if extra_metric_count > 0 else None
+        return result
 
     def _write_eval_history(self) -> None:
         path = Path(self.logger.log_dir) / "eval_history.json"
@@ -387,6 +453,11 @@ def build_runner_from_checkpoint(
     eval_num_envs: int = EVAL_NUM_ENVS_DEFAULT,
     eval_interval: int = EVAL_INTERVAL_DEFAULT,
     device: str = "cuda",
+    *,
+    runner_cls: type[FrozenEvalRunner] | None = None,
+    env_cfg_factory=None,
+    task_id: str | None = None,
+    extra_scalar_metric_fn=None,
 ) -> FrozenEvalRunner:
     """Construct a FrozenEvalRunner with actor weights loaded from a saved
     checkpoint, for one-off evaluation outside a training run
@@ -402,6 +473,11 @@ def build_runner_from_checkpoint(
     Loads only the actor (load_cfg={"actor": True}, confirmed via
     scripts/inspect_runner.py's PPO.load() source) -- optimizer/critic state
     is irrelevant for a frozen, non-training evaluation.
+
+    runner_cls / env_cfg_factory / task_id / extra_scalar_metric_fn: phase-2
+    generalization hooks (see module docstring), all keyword-only and all
+    defaulting to exactly cartpole's own values when omitted -- existing
+    cartpole call sites (none of which pass these) are unaffected.
     """
     from dataclasses import asdict
 
@@ -409,21 +485,27 @@ def build_runner_from_checkpoint(
 
     from cartpole_term.env_cfg import TASK_ID, cartpole_balance_term_env_cfg
 
-    rl_cfg = load_rl_cfg(TASK_ID)
+    runner_cls = runner_cls or FrozenEvalRunner
+    env_cfg_factory = env_cfg_factory or cartpole_balance_term_env_cfg
+    task_id = task_id or TASK_ID
+
+    rl_cfg = load_rl_cfg(task_id)
     rl_cfg.seed = seed
     agent_cfg = asdict(rl_cfg)
 
-    env_cfg = cartpole_balance_term_env_cfg(play=False)
+    env_cfg = env_cfg_factory(play=False)
     env_cfg.scene.num_envs = 1
     env_cfg.seed = seed
     raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     env = RslRlVecEnvWrapper(raw_env, clip_actions=rl_cfg.clip_actions)
 
-    runner = FrozenEvalRunner(
+    runner = runner_cls(
         env,
         agent_cfg,
         log_dir=None,
         device=device,
+        env_cfg_factory=env_cfg_factory,
+        extra_scalar_metric_fn=extra_scalar_metric_fn,
         eval_num_envs=eval_num_envs,
         eval_interval=eval_interval,
     )

@@ -51,8 +51,8 @@ done
 python scripts/record_video.py --which both --seed 0 --min-failures 10
 ```
 
-`colab_entry.ipynb` is a thin Colab shim over exactly these commands
-(CLAUDE.md S4.2 -- no logic in notebook cells).
+`notebooks/colab_entry.ipynb` is a thin Colab shim over exactly these
+commands (CLAUDE.md S4.2 -- no logic in notebook cells).
 
 ---
 
@@ -389,3 +389,190 @@ become.
   K=5 predictors with VaR-based risk-sensitive readout is specified but
   not implemented in this pass — `--predictor.uncertainty ensemble`
   raises `NotImplementedError` deliberately rather than approximating it.
+
+## 14. Phase 2: Go1 fall pipeline (outside the cartpole spec)
+
+Everything above is the specified cartpole experiment. This section is a
+later extension to a Unitree Go1 quadruped in mjlab; it is not covered by
+`CLAUDE.md`, and every decision is logged in `DEVIATIONS.md`. **All Go1
+results are single-seed (seed 0).**
+
+Pipeline: a walking policy, a 150 N push that makes it fall, the same
+termination predictor trained on those falls, a separate protective
+"small-fall" policy, and a hand-off from walker to protective policy when the
+predictor fires.
+
+### Reproduce
+
+`notebooks/go1_end_to_end.ipynb` runs every stage (Colab A100; upload
+`cartpole_term_code.zip`). It has not been executed as a whole; each script
+in it was run individually. The scripts, in order:
+
+```bash
+python scripts/inspect_robot_task.py --robot go1
+python scripts/robot_train.py --robot go1 --seeds 0 --eval.interval 1000
+python scripts/go1_wild_push_predictor.py --checkpoint-file checkpoints/model_9999.pt --mechanism impulse --impulse-force 150
+python scripts/go1_collect_flagged_states.py --checkpoint-file checkpoints/model_9999.pt --seed 0 --capture-state-bank
+python scripts/go1_collect_flagged_states.py --checkpoint-file checkpoints/model_9999.pt --seed 5 --capture-state-bank --capture-at-flag
+python scripts/go1_train_protective.py --seeds 0 --state-bank-file outputs/go1_flag_state_bank_seed5.npz   # round 8b; take model_200.pt
+python scripts/go1_handoff_eval.py --protective-checkpoint <model_200.pt>
+python scripts/go1_collect_flagged_states.py --checkpoint-file checkpoints/model_9999.pt --seed 4 --capture-state-bank --capture-at-flag
+python scripts/go1_protective_compare.py --protective-checkpoint <model_200.pt> --state-bank-file outputs/go1_flag_state_bank_seed4.npz
+python scripts/go1_handoff_demo_video.py --protective-checkpoint <model_200.pt>
+# round 7 (earlier policy): go1_train_protective.py --seeds 0 --peak-force-weight 0, take model_120.pt
+```
+
+Versions recorded on the Go1 evaluation runs (2026-09-30, A100-SXM4-40GB):
+mjlab 1.6.0, mujoco 3.11.0, mujoco-warp 3.11.0, rsl-rl-lib 5.4.2,
+torch 2.11.0+cu128, warp-lang 1.17.0, CUDA 12.8 (the Gate 7 run on 2026-10-03 had
+torch 2.11.0+cu130, CUDA 13.0, everything else identical). The walker, predictor, and
+protective training runs (2026-09-13 to 09-25) used an unpinned
+`pip install mjlab` and did not record versions.
+
+### Walker and push
+
+- Walker: mjlab's shipped Go1 flat-velocity task and PPO config, 4,096 envs,
+  10,000 iterations; the only reward change is `air_time` = 0.25.
+- Push (collection and evaluation only, never in walker training):
+  `apply_body_impulse` on the trunk, each force axis uniform in ±150 N, zero
+  torque, 0.1-0.3 s duration, 1-3 s cooldown, on top of the shipped mild
+  `push_robot` event.
+
+### Fall predictor (150 N push, seed 0, test split)
+
+Same MLP, loss, labelling (16 steps = 0.32 s at 50 Hz), and episode-level
+split as the cartpole predictor. Input is 48 observations + 12 actions.
+
+| | base rate | AUPRC | AUROC | Brier | ECE | F1 | precision | recall | McFadden R² |
+|---|---|---|---|---|---|---|---|---|---|
+| MLP | 0.0180 | 0.849 | 0.991 | 0.0062 | 0.0006 | 0.755 | 0.822 | 0.698 | 0.741 |
+| logistic regression, all inputs | 0.0180 | 0.736 | 0.965 | 0.0082 | 0.0017 | 0.674 | 0.709 | 0.641 | 0.620 |
+| base-rate constant | 0.0180 | 0.018 | 0.500 | 0.0176 | 0.0089 | 0.035 | 0.018 | 1.000 | 0.000 |
+| constant negative | 0.0180 | 0.018 | 0.500 | 0.0180 | 0.0180 | 0.000 | 0.000 | 0.000 | -4.51 |
+
+1,003,212 labelled transitions, 1,164 terminated episodes, one failure cause
+(`fell_over`). Threshold 0.547, chosen on validation. Offline median
+detection lead 12 steps (0.24 s). Best single feature: action L2 norm
+(AUROC 0.953). Deviation from the cartpole spec: inputs are not normalized.
+
+### Protective policy (Gate 5)
+
+Trained with the same PPO stack on episodes that start from real mid-fall
+states (a "bank" captured between the predictor's flag and the fall). Reward:
+vulnerability-weighted contact force, root linear velocity, action rate,
+joint limits, joint torque, and ground covered by the fall (our own term).
+The checkpoint in this subsection is round 7, iteration 120; the reported
+policy is round 8 (below).
+
+Pre-registered confirmation on a fresh bank (seed 2, 505 falls, medians):
+
+| | trunk/hip peak force (N) | any-body peak force (N) | peak torque (Nm) | ground covered (m) | came to rest |
+|---|---|---|---|---|---|
+| protective | 0 | 1206 | 12.7 | 0.32 | 100% |
+| walker continues | 482 | 1155 | 35.6 | 0.61 | 75% |
+| zero action | 569 | 1193 | 13.1 | 0.41 | 100% |
+
+The pre-registered verdict was **fail**: the protective policy must beat both
+baselines on all four metrics, and it does not on any-body peak force. Per
+fall, trunk/hip force is lower than zero action in 86-90% of falls and ground
+covered in 82-83%; torque against zero action and any-body force are ties.
+In 98% of protective falls the peak force lands on the legs.
+
+### Live hand-off (Gate 6)
+
+Walker under the push, predictor scoring every step, irreversible switch to
+the protective policy on the first threshold crossing. 1,024 trials, nominal
+arm (no switch): live recall 0.999 (763 of 764 falls flagged first),
+precision 0.834 (152 of 915 flags were not followed by a fall within 3 s),
+median lead 15 steps (0.30 s). Weights unchanged, no env switched back.
+**Pass.**
+
+### Hand-off ablation (Gate 7)
+
+Each robot's exact state at the moment the predictor fires was captured from
+the live system (fresh bank, seed 3, 500 flag moments, each followed by a real
+fall) and replayed from identical start states under three policies, with no
+further pushes. Medians:
+
+| | trunk/hip peak force (N) | any-body peak force (N) | peak torque (Nm) | ground covered (m) | came to rest |
+|---|---|---|---|---|---|
+| hand-off to protective | 0 | 1159 | 12.9 | 0.37 | 100% |
+| walker continues | 380 | 1026 | 35.6 | 0.87 | 62% |
+| zero action | 611 | 1323 | 13.7 | 0.55 | 99.6% |
+
+The pre-registered verdict (hand-off beats the walker on all four) was
+**fail**, on any-body peak force: the hand-off is higher in 57% of falls
+(median +106 N). It is lower than the walker on trunk/hip force in 72% of
+falls (higher in 4%), on peak torque in 98%, and on ground covered in 96%.
+
+This is the round-7 policy (iteration 120); round 8 below supersedes it.
+
+### Round 8: the reported protective policy
+
+After the Gate 7 fail the stated goal was fixed as: the main aim is less
+ground covered by the fall; contact force should come down a bit but may stay
+large. Round 8 added one reward term (a penalty on the fall's peak
+contact force on any single body) and trained two variants: 8a on the same
+mid-fall states as round 7, 8b from flag-moment states, which is where the
+hand-off really starts. One checkpoint was picked by a fixed rule on the
+seed-3 flag bank (**8b, iteration 200**) and tested once on a fresh flag bank
+(seed 4, 500 flag moments). Medians:
+
+| | trunk/hip peak force (N) | any-body peak force (N) | peak torque (Nm) | ground covered (m) | came to rest |
+|---|---|---|---|---|---|
+| hand-off to protective (8b it200) | 0 | 1001 | 18.4 | 0.36 | 99.8% |
+| walker continues | 363 | 995 | 35.6 | 0.95 | 59% |
+| limp (motors off) | 281 | 1099 | 0 | 0.46 | 99.8% |
+
+Limp switches the motors off: zero torque at every joint from the hand-off
+moment (both motor gains scaled to zero; measured torque exactly 0). It is the
+"do nothing" baseline. An earlier stiff-hold baseline ("zero action": the
+motors hold the default pose) was dropped once limp was measured, because limp
+was better than it on ground covered, trunk force, and any-body force while
+using no torque (same run: 0.52 m, 617 N, 1292 N, 13.2 Nm). It still appears in
+the round-7 tables above, which predate the limp arm. A first run of these
+falls without the limp arm agreed with this table within about 1%.
+
+- **Space goal: pass against both baselines.** Ground covered is 62% below the
+  walker's and 21% below limp's. Per fall it is lower than the walker in 98% of
+  falls and than limp in 77%.
+- **Force:** trunk/hip force is lower than the walker in 69% of falls (higher
+  in 3%) and than limp in 72%; the trunk never touches the ground in 90% of
+  falls (limp: 25%). Any-body peak force is level with the walker (1001 vs
+  995 N; higher in 53% of falls) and 9% below limp (lower in 55% of falls).
+  Under the original four-metric rule (beat the walker on all four) this is
+  still a fail, by a few newtons.
+- **Cost:** the protective policy uses motor torque (18.4 Nm peak, about half
+  the walker's, higher than round 7's 12.9 Nm); limp needs none. Its margin on
+  space is much smaller against limp than against the walker.
+
+Demo video: `outputs/videos/go1_handoff_demo_round8b_it200.mp4` (three falls, walker
+alone vs hand-off, side by side; in the video the pushes stop once the robot is
+on the ground).
+
+### Limitations (Go1)
+
+- **Single seed.** One walker, one predictor, one protective policy.
+- **The protective policy does not reduce peak impact below the walker's.** It
+  moves the impact from the trunk to the legs. With round 8, median peak force
+  on any body is level with the walker's and a little below limp's; its upper
+  tail (worst 10% of falls) is still higher than both.
+- **The limp baseline is idealized:** no joint friction or damping was added, so
+  it is the most free-falling version of an unpowered robot.
+- **Run-to-run noise.** The same bank replayed twice gave walker medians of
+  1026 N and 1073 N (the simulator is not deterministic), so differences of a
+  few percent between medians should not be read as effects.
+- **Round 8 was not re-run through the live hand-off check (Gate 6)** and has
+  no mid-fall (Gate 5-style) test; its evidence is the flag-moment replay.
+- **False alarms.** 17% of live predictor flags were not followed by a fall;
+  on those the hand-off puts a robot on the ground that would have stayed up.
+  That cost is not measured.
+- **Checkpoint selection.** Each reported table comes from a bank that was not
+  used to train or to choose the checkpoint (round 7: chosen on seed 1, tested
+  on seed 2 and seed 3; round 8: chosen on seed 3, tested on seed 4).
+- **The live paired ablation was not possible.** MuJoCo Warp is not
+  bit-deterministic, so two live runs cannot be matched robot by robot; the
+  Gate 7 ablation replays captured flag-moment states instead, without
+  further pushes. That replay covers only flags that led to a real fall.
+- **Ground covered is our own metric,** not from the fall literature.
+- G1 humanoid: only the task scaffolding exists; no G1 results are reported.
