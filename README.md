@@ -90,3 +90,7 @@ Checkpoints, datasets and videos are not in the repository.
 - arXiv:2512.01336: self-protective falling policy; source of the contact-force,
   base-velocity and action-rate reward weights.
 - GYF, arXiv:2310.04828: fall protection on the Go1.
+
+## License
+
+MIT; see [`LICENSE`](LICENSE).

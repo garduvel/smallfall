@@ -3,6 +3,7 @@ name = "cartpole-term"
 version = "0.1.0"
 description = "SmallFall: fall prediction and a protective falling policy for the Unitree Go1 in mjlab (plus the original cartpole termination-predictor study)"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
     "mjlab",
     "scikit-learn",
