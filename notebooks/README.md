@@ -13,6 +13,7 @@ Upload `cartpole_term_code.zip` (rebuild with `python3 tools/build_code_zip.py`)
 | `go1_recovery_eval.ipynb` | Confirmatory statistical evaluation of the three recovery policies: three fresh flag banks (about 1,500 paired falls), a mid-fall bank, a repeat replay, then the paired tests and figures. Upload folder: `colab_uploads/recovery_eval/`. |
 | `go1_limp_baseline.ipynb` | Adds a limp (motors off) baseline to the reported round-8 comparison, on the same 500 flag moments. Upload folder: `colab_uploads/limp_baseline/`. |
 | `go1_handoff_demo_video.ipynb` | Re-renders only the side-by-side hand-off demo video. Upload folder: `colab_uploads/demo_video/`. |
+| `g1_walker.ipynb` | Stage 1 of the G1 humanoid port (`docs/G1_PORT_PLAN.md`): trains the G1 walker for 10,000 iterations, resuming from Drive after a disconnect; then its evaluation curve and a video. Clones the public repo, so no upload. Built by `tools/notebook_builders/build_g1_walker_nb.py`. |
 
 ## `archive/`: the runs that produced the recorded Go1 results
 

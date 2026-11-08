@@ -4572,3 +4572,39 @@ force, torque, the predictor) and gives the settle rate, any-body force
 against the walker, and the false-alarm spread a short "secondary
 observations" section. All per-run p-values, including those, are tabulated
 in full in its section 3.3.
+
+## G1 humanoid port begins: walker notebook, 10,000 iterations (2026-11-08)
+
+- **User decision:** the G1 walker is trained for 10,000 iterations, not the
+  30,000 mjlab ships for the G1 (`docs/G1_PORT_PLAN.md` section 8, decision 2).
+  This matches the Go1 walker's budget. It overrides `scripts/robot_train.py`'s
+  "run to mjlab's shipped default" rule, which is why it is logged here; the
+  script itself is unchanged and is given `--max-iterations 10000`.
+- **Risk:** a walker short of mjlab's full budget may walk less robustly, and
+  every later stage depends on it. The notebook's frozen-evaluation curve (A4)
+  and video (A5) are the check, as for the Go1: near-full 1,000-step episodes
+  with almost no falls, and steady forward walking in the video. If it fails,
+  training resumes from `model_9999.pt` towards a larger total.
+- **Notebook:** `notebooks/g1_walker.ipynb` (built by
+  `tools/notebook_builders/build_g1_walker_nb.py`). Checkpoint and frozen
+  evaluation every 500 iterations (Go1 used 1,000), so a Colab disconnect
+  loses at most 500 iterations. The run directory lives on Google Drive
+  through a link, and a re-run resumes from the newest checkpoint that still
+  loads. Code comes from cloning the public repo instead of uploading
+  `cartpole_term_code.zip`; the commit is recorded in
+  `outputs/versions_g1_walker.json`.
+- Later stages (push sweep, predictor, protective policy, evaluation) still
+  need the refactor in `docs/G1_PORT_PLAN.md` section 5.
+- **First Colab run, smoke test (2026-11-08):** crashed at the first frozen
+  evaluation with `RuntimeError: Inplace update to inference tensor outside
+  InferenceMode` in mjlab's `ContactSensor.reset()` (`buf[env_ids] = 0.0`).
+  The G1 task's foot-contact sensor keeps a history buffer (the Go1's never
+  did). `_run_eval_rollout` reset the eval env outside inference mode but
+  stepped it inside, so after the "mean" pass the buffer was an inference
+  tensor and the "sampled" pass's reset failed. Same bug class as the
+  protective `settled` and `apply_body_impulse` crashes above. **Fix:** the
+  reset in `FrozenEvalRunner._run_eval_rollout` now runs inside
+  `torch.inference_mode()` (obs from it only ever feed the frozen actor).
+  New `tests/test_frozen_eval_inference_reset.py` reproduces the sequence
+  without mjlab; it fails on the old code and passes on the new. Go1 eval
+  behaviour is unchanged apart from that wrapper.

@@ -335,7 +335,13 @@ class FrozenEvalRunner(MjlabOnPolicyRunner):
         env = self._eval_env
         assert env is not None
         env.seed(seed)
-        obs, _ = env.reset()
+        # Reset inside inference mode too: the rollout below steps inside it,
+        # so any buffer an env term (re)allocates there is an inference tensor,
+        # and resetting it in place outside inference mode at the next eval
+        # raises. Hit by the G1's contact-sensor history buffer (DEVIATIONS.md,
+        # 2026-11-08); same bug class as the earlier settled/impulse crashes.
+        with torch.inference_mode():
+            obs, _ = env.reset()
         obs = obs.to(self.device)
 
         num_envs = env.num_envs
