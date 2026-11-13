@@ -53,12 +53,13 @@ def test_add_impulse_push_matches_the_go1_definition():
     assert term.params["asset_cfg"].body_names == ("trunk",)
 
 
-def test_g1_push_is_the_go1_push_scaled_by_mass():
+def test_push_forces_are_the_logged_decisions():
     go1, g1 = profiles.GO1, profiles.G1
     assert (go1.push_body, go1.impulse_force_n) == ("trunk", 150.0)
-    assert g1.push_body == "torso_link"
-    same_acceleration = go1.impulse_force_n * g1.mass_kg / go1.mass_kg  # 392.4 N
-    assert abs(g1.impulse_force_n - same_acceleration) < 5.0
+    # 200 N matches the Go1's fall rate; the mass-scaled force (392 N) was
+    # rejected after the sweep (DEVIATIONS.md, 2026-11-13).
+    assert (g1.push_body, g1.impulse_force_n) == ("torso_link", 200.0)
+    assert abs(go1.impulse_force_n * g1.mass_kg / go1.mass_kg - 392.4) < 0.5
 
 
 def test_g1_push_body_is_a_real_g1_body():

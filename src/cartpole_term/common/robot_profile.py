@@ -120,9 +120,10 @@ G1 = RobotProfile(
     # Upper body above the waist joints, where a shove lands (G1_PORT_PLAN.md).
     push_body="torso_link",
     mass_kg=33.3411,
-    # Same rule as the Go1, same acceleration: 150 N x 33.34 / 12.74 = 392 N,
-    # rounded (DEVIATIONS.md, 2026-11-13).
-    impulse_force_n=390.0,
+    # Matches the Go1's fall rate at 150 N (1.17 vs 1.07 falls per 1,000
+    # robot-steps). The mass-scaled 390 N made the G1 fall 4.1x as often;
+    # user decision after the sweep (DEVIATIONS.md, 2026-11-13).
+    impulse_force_n=200.0,
     # Live-confirmed actor obs term order, same method as Go1's above:
     # base_lin_vel(3) + base_ang_vel(3) + projected_gravity(3) +
     # joint_pos(29) + joint_vel(29) + actions(29) + command(3) = 99.

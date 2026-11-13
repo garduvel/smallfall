@@ -4699,3 +4699,34 @@ in full in its section 3.3.
   - `robot_watch_episodes.py --impulse-force` records under the push.
   - New `tests/test_push.py`.
   - Notebook: `notebooks/g1_predictor.ipynb`.
+- **Sweep result and decision (2026-11-13):** falls per 1,000 robot-steps,
+  `outputs/g1_impulse_sweep_seed0.json` (walker2, L4):
+
+  | Push | Falls per 1,000 steps |
+  |---|---|
+  | 200 N | 1.17 |
+  | 300 N | 3.11 |
+  | 390 N | 4.38 |
+  | 500 N | 5.36 |
+  | 600 N | 5.87 |
+
+  The Go1 at 150 N scored 1.07. The mass-scaled 390 N came out at 4.10x the
+  Go1's rate, just outside the pre-set 0.25x-4x check, so the notebook
+  stopped as designed.
+  - **User decision: 200 N**, which matches the Go1's fall rate (1.09x). The
+    rule for the G1 is therefore "same fall frequency as the Go1", not "same
+    acceleration".
+  - **This was chosen after seeing the sweep**, which the pre-registration was
+    meant to avoid; it is recorded as such. The reasons, given before the
+    choice:
+    - The predictor's chance level (the positive fraction) and AUPRC are then
+      directly comparable with the Go1's.
+    - The robot walks for a similar time between falls (about 17 s, against
+      about 4.5 s at 390 N).
+    - 200 N is inside arXiv:2512.01336's 50-850 N humanoid range.
+  - **Likely reason the equal-acceleration force overshoots** (not tested):
+    the G1's push lands on the upper torso, high above its feet, while the
+    Go1's lands on its trunk, so the same acceleration tips a tall, narrow
+    biped over far more readily.
+- `RobotProfile.G1.impulse_force_n = 200.0`. The notebook now computes the
+  check for `PUSH_N` from the saved sweep rows, so the saved sweep is reused.
