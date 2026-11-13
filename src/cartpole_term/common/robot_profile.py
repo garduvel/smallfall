@@ -88,12 +88,14 @@ G1 = RobotProfile(
     task_id_candidates=("Mjlab-Velocity-Flat-Unitree-G1",),
     task_id_must=("g1", "velocity", "flat"),
     task_id_exclude=("getup",),
-    # G1 ships the same air_time term at weight 0.0 (confirmed via GitHub
-    # source review, then re-confirmed live by
-    # scripts/inspect_robot_task.py --robot g1) -- same override, same
-    # rationale as Go1's. Re-confirmed again at apply time by
-    # g1/env_cfg.py's loud RuntimeError guard.
-    reward_overrides={"air_time": 0.25},
+    # No reward overrides: mjlab's G1 recipe as shipped. Its G1 config sets
+    # air_time to 0.0 explicitly (tasks/velocity/config/g1/env_cfgs.py),
+    # unlike the Go1 case. The Go1's IsaacLab-sourced 0.25 was copied here
+    # at first, and the first 10,000-iteration G1 walker learned to sit in a
+    # split instead of walking (DEVIATIONS.md, 2026-11-12). feet_air_time
+    # pays per foot off the ground while a move is commanded, and no G1
+    # termination ends an episode on a seated pelvis.
+    reward_overrides={},
     # Live-confirmed via scripts/inspect_robot_task.py --robot g1
     # (outputs/g1_task_inspection.json), 2026-09-13: actor obs (4, 99) --
     # NOT the ~286 estimated from static source review (that estimate

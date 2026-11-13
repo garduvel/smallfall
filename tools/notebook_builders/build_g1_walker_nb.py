@@ -37,7 +37,7 @@ reconnect and **run all** again with the same `RUN_NAME`: the newest readable
 checkpoint is found and training continues from it to 10,000. Keep the tab
 open (or use Colab Pro background execution); idle sessions are cut off.
 
-**Output:** `checkpoints/g1_walker_model_9999.pt` here and on Drive.
+**Output:** `checkpoints/g1_walker_<RUN_NAME>_model_9999.pt` here and on Drive.
 """)
 
 md("## 0a. Install (pinned versions), confirm GPU")
@@ -71,14 +71,15 @@ for d in ("checkpoints", "outputs", "logs/rsl_rl"):
 
 md("## 0c. Settings, Google Drive, package versions")
 code("""
-RUN_NAME = "walker1"           # Drive folder for this run; a new name starts a fresh run
+RUN_NAME = "walker2"           # Drive folder for this run; a new name starts a fresh run
+#   walker1 = first attempt, air_time 0.25, learned to sit (DEVIATIONS.md 2026-11-12)
 TOTAL_ITERATIONS = 10_000      # user's budget (mjlab ships 30,000 for the G1)
 CHECKPOINT_EVERY = 500         # also the frozen-evaluation interval
 SEED = 0
 NUM_ENVS = 4096
 EXPERIMENT = "g1_velocity_term"            # set in src/cartpole_term/g1/rl_cfg.py
 FINAL_NAME = f"model_{TOTAL_ITERATIONS - 1}.pt"   # iterations are numbered from 0
-WALKER = f"checkpoints/g1_walker_{FINAL_NAME}"
+WALKER = f"checkpoints/g1_walker_{RUN_NAME}_{FINAL_NAME}"
 
 from google.colab import drive, files
 drive.mount("/content/drive")
@@ -212,30 +213,46 @@ if not os.path.exists(WALKER):
 """)
 
 md("""
-## A4. Frozen-evaluation curve
-Every `CHECKPOINT_EVERY` iterations the runner evaluates the frozen policy on
-256 robots with deterministic actions. A walker
-that walks reaches the full 1,000-step episode with almost no falls.
+## A4. Training curves: survival and velocity tracking
+Left: episode length from the frozen evaluation every `CHECKPOINT_EVERY`
+iterations (256 robots, deterministic actions). **Length alone cannot tell
+walking from sitting**: a seated robot never tips past 70 degrees, so it
+also lasts the full 1,000 steps. Right: the velocity-tracking reward from
+training, which only rises if the robot actually moves as commanded. Can be
+run while training is paused or after a disconnect to check progress.
 """)
 code("""
 import matplotlib.pyplot as plt
-hist_path = os.path.join(drive_run_dirs()[-1], "eval_history.json") if drive_run_dirs() else None
-if not hist_path or not os.path.exists(hist_path):
-    print("no eval_history.json (walker was uploaded, not trained here)")
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+runs = drive_run_dirs()
+if not runs:
+    print("no training run on Drive (walker was uploaded, not trained here)")
 else:
-    hist = json.load(open(hist_path))
-    it = [h["iteration"] for h in hist]
-    length = [h["mean_action"]["mean_episode_length"] for h in hist]
-    fell = [h["mean_action"]["termination_cause_breakdown"].get("fell_over", 0.0) for h in hist]
+    run = runs[-1]
     fig, ax = plt.subplots(1, 2, figsize=(11, 3.5))
-    ax[0].plot(it, length); ax[0].set(xlabel="iteration", ylabel="mean episode length (steps)", ylim=(0, 1050))
-    ax[1].plot(it, fell); ax[1].set(xlabel="iteration", ylabel="share of episodes ending in a fall", ylim=(0, 1))
+    hist_path = os.path.join(run, "eval_history.json")
+    if os.path.exists(hist_path):
+        hist = json.load(open(hist_path))
+        it = [h["iteration"] for h in hist]
+        length = [h["mean_action"]["mean_episode_length"] for h in hist]
+        ax[0].plot(it, length)
+        print(f"frozen eval at iteration {it[-1]}: mean episode length {length[-1]:.0f} of 1000 steps")
+        shutil.copy(hist_path, "outputs/g1_walker_eval_history.json")
+    ax[0].set(xlabel="iteration", ylabel="frozen-eval episode length (steps)", ylim=(0, 1050))
+    acc = EventAccumulator(run, size_guidance={"scalars": 0}); acc.Reload()
+    tracking = {}
+    for tag in ("Episode_Reward/track_linear_velocity", "Episode_Reward/air_time", "Episode_Reward/upright"):
+        if tag in acc.Tags()["scalars"]:
+            ev = acc.Scalars(tag)
+            ax[1].plot([e.step for e in ev], [e.value for e in ev], label=tag.split("/")[1])
+            tracking[tag] = ev[-1].value
+    ax[1].set(xlabel="iteration", ylabel="reward per episode (training)"); ax[1].legend(frameon=False)
     for a in ax: a.spines[["top", "right"]].set_visible(False)
-    fig.tight_layout(); fig.savefig("outputs/g1_walker_eval_curve.png", dpi=150); plt.show()
-    print(f"last evaluation (iteration {it[-1]}): mean length {length[-1]:.0f} steps, falls {fell[-1]:.1%}")
-    shutil.copy(hist_path, "outputs/g1_walker_eval_history.json")
-    save("outputs/g1_walker_eval_curve.png", "outputs/g1_walker_eval_history.json")
+    fig.tight_layout(); fig.savefig("outputs/g1_walker_curves.png", dpi=150); plt.show()
+    print("latest training rewards:", {k.split("/")[1]: round(v, 3) for k, v in tracking.items()})
+    save("outputs/g1_walker_curves.png", *[p for p in ["outputs/g1_walker_eval_history.json"] if os.path.exists(p)])
 """)
+
 
 md("""
 ## A5. Walker video (three episodes, forward commands)

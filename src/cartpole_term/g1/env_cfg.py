@@ -6,17 +6,11 @@ second hand-copied regex -- this is the direct fix for the audit finding
 that Go1's original discover_source_task_id used a naive, non-word-bounded
 regex that would not have generalized safely to a second robot.
 
-mjlab's shipped G1 flat-velocity task ships the same air_time reward term
-at weight 0.0 as Go1 does (confirmed via GitHub source review this
-session), so the same IsaacLab-sourced override Go1 already applies (see
-cartpole_term.go1.env_cfg's GO1_AIR_TIME_WEIGHT comment and DEVIATIONS.md
-for the full citation) is declared for G1 too, in
-RobotProfile.reward_overrides -- not re-derived, not assumed identical
-without checking: this file's own loud RuntimeError guard below re-confirms
-the term still exists on the actually-installed mjlab version before ever
-mutating it, and scripts/inspect_robot_task.py --robot g1 independently
-confirms the shipped weight is still 0.0 before that override is applied
-in a real training run.
+G1.reward_overrides is empty: mjlab's G1 recipe is used as shipped. Its
+G1 config sets air_time to 0.0 on purpose; copying the Go1's 0.25 made the
+first G1 walker sit in a split (DEVIATIONS.md, 2026-11-12). The override
+loop below stays so any future override is still checked against the
+installed task before it is applied.
 
 G1's exact obs/action widths are NOT hardcoded here -- see
 RobotProfile.expected_obs_dim/expected_action_dim in

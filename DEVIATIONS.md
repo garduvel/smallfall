@@ -4608,3 +4608,37 @@ in full in its section 3.3.
   New `tests/test_frozen_eval_inference_reset.py` reproduces the sequence
   without mjlab; it fails on the old code and passes on the new. Go1 eval
   behaviour is unchanged apart from that wrapper.
+
+## G1 walker attempt 1 sat down instead of walking; air_time override removed (2026-11-12)
+
+- **Observed (user, from the A5 video of the 10,000-iteration walker,
+  `RUN_NAME = walker1`, L4):** the robot drops into a split, sits on its
+  pelvis, and stays there for the whole episode.
+- **Why the frozen evaluation did not flag it:** its only measure is episode
+  length, and the G1's only failure ending is `fell_over` (torso tilted more
+  than 70 degrees). A seated robot with an upright torso never ends early, so
+  it scores the full 1,000 steps, the same as a walker.
+- **Likely cause (from mjlab 1.6.0's source, read locally from the wheel):**
+  `tasks/velocity/config/g1/env_cfgs.py` sets `cfg.rewards["air_time"].weight
+  = 0.0` explicitly for the G1. `RobotProfile.G1.reward_overrides` set it to
+  0.25, copied from the Go1, where 0.25 is IsaacLab's Go1 value
+  (`cartpole_term/go1/env_cfg.py`). There was no G1 source for it.
+  `mdp.feet_air_time` pays +1 per foot whose current air time is between
+  0.05 and 0.5 s whenever the command is above 0.5, with no requirement
+  that the robot moves. Sitting frees both feet to be lifted repeatedly
+  without any balance risk. Not confirmed from this run's per-term reward
+  logs, which stayed on the Colab runtime.
+- **Fix:** `G1.reward_overrides = {}`, so the G1 trains with mjlab's G1 recipe
+  exactly as shipped. The Go1 keeps its override (its walker is the reported
+  one and is unaffected).
+- **Notebook changes:** default `RUN_NAME = "walker2"` (fresh run, never
+  resumes the seated policy); the finished walker's file name now carries
+  `RUN_NAME`, so an old walker left on a runtime is not mistaken for the new
+  one; A4 now also plots the training velocity-tracking, air-time and upright
+  rewards from TensorBoard, because episode length alone cannot tell walking
+  from sitting.
+- **Check for attempt 2, fixed before it runs:** the tracking reward rises
+  over training, and the A5 video shows the robot walking forward on its
+  feet. If it sits again with mjlab's own recipe, the 10,000-iteration budget
+  (against mjlab's 30,000) becomes the next suspect, and training continues
+  from the final checkpoint.
