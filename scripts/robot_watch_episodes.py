@@ -78,6 +78,11 @@ MAX_TOTAL_STEPS_PER_EPISODE_BUDGET_MULTIPLIER = 2  # safety cap, see module docs
 def _build_watch_env_cfg(args: argparse.Namespace, backend, profile) -> object:
     cfg = backend.env_cfg_factory(play=False)  # play=True not implemented for either robot yet
     cfg.scene.num_envs = 1
+    if args.impulse_force is not None:
+        from cartpole_term.common.push import add_impulse_push
+
+        add_impulse_push(cfg, profile.push_body, args.impulse_force)
+        print(f"[robot-watch] dataset push on: impulse +-{args.impulse_force} N on {profile.push_body}")
     cfg.viewer.azimuth = args.camera_azimuth
     cfg.viewer.elevation = args.camera_elevation
     if args.camera_distance is not None:
@@ -179,7 +184,8 @@ def record_robot_episodes(args: argparse.Namespace, device: str) -> None:
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    final_path = outputs_dir / f"{profile.name}_watch_seed{args.seed}_ep{args.episodes}.mp4"
+    push_tag = f"_push{args.impulse_force:.0f}N" if args.impulse_force is not None else ""
+    final_path = outputs_dir / f"{profile.name}_watch{push_tag}_seed{args.seed}_ep{args.episodes}.mp4"
     fps = round(1.0 / step_seconds)
     writer = imageio.get_writer(str(final_path), fps=fps)
     for frame in frames:
@@ -215,6 +221,11 @@ def main() -> None:
         "natural forward-only sampled range. Ignored if --natural-commands is set. "
         "cartpole_term.common.commands.MAX_FORWARD_COMMAND_LIN_VEL_X (3.0) is the absolute highest "
         "this task's shipped command_vel curriculum ever asks for.",
+    )
+    parser.add_argument(
+        "--impulse-force", dest="impulse_force", type=float, default=None,
+        help="Add the fall-dataset impulse push (N per axis, on RobotProfile.push_body) to check that "
+        "the falls look plausible. Off by default.",
     )
     args = parser.parse_args()
 

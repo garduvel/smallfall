@@ -209,9 +209,13 @@ MASS_SCALED_FORCE_RANGE_N = tuple(f * MASS_SCALE_RATIO for f in LITERATURE_FORCE
 # better for both predictor quality AND visual plausibility, so there's
 # no reason to start near the top of the range.
 DEFAULT_IMPULSE_FORCE_N = 150.0
-DEFAULT_IMPULSE_TORQUE_N = 0.0  # zero on purpose: pure linear force at the trunk's own CoM, no added spin -- see module docstring
-DEFAULT_IMPULSE_DURATION_S = (0.1, 0.3)
-DEFAULT_IMPULSE_COOLDOWN_S = (1.0, 3.0)  # matches push_robot's own shipped interval_range_s
+# Push definition now lives in cartpole_term.common.push (shared by every
+# robot); re-exported here because other go1_*.py scripts import these names.
+from cartpole_term.common.push import (  # noqa: E402
+    DEFAULT_IMPULSE_COOLDOWN_S,
+    DEFAULT_IMPULSE_DURATION_S,
+    DEFAULT_IMPULSE_TORQUE_N,
+)
 
 
 def _run_collection_loop(
@@ -473,61 +477,17 @@ def build_impulse_env_cfg_factory(
     torque_n: float,
     duration_s: tuple[float, float],
     cooldown_s: tuple[float, float],
+    robot: str = "go1",
 ):
-    """Factory-builder for the force-impulse mechanism (mjlab's
-    apply_body_impulse, confirmed real signature via
-    mjlab/envs/mdp/events.py this session) -- a sustained force/torque
-    wrench applied to the trunk for a sampled duration, then a cooldown,
-    repeating. Respects the robot's actual mass/inertia (F=ma) instead of
-    teleporting its velocity, which is WHY every real perturbation-based
-    failure paper checked this session (SafeFall, arXiv:2511.18509; the
-    self-protective falling policy, arXiv:2512.01336; GYF,
-    arXiv:2310.04828) uses this kind of mechanism rather than a raw
-    velocity-scale multiplier.
+    """The force-impulse push (mjlab's apply_body_impulse on the robot's push
+    body, on top of the task's own mild push_robot). Delegates to
+    cartpole_term.common.push.impulse_env_cfg_factory; for the Go1 the
+    resulting cfg is the same as before the move (body "trunk"). See that
+    module for why the event must exist before the env is built. Kept under
+    this name because go1_collect_flagged_states.py and others import it."""
+    from cartpole_term.common.push import impulse_env_cfg_factory
 
-    mjlab's shipped push_robot event (velocity-teleport, mild, unscaled)
-    is left completely untouched here, on purpose -- it was never flagged
-    as visually problematic at its shipped magnitude, so this impulse is
-    layered ON TOP of it as an ADDITIONAL stressor (matching the
-    literature's own "combine multiple factors" approach) rather than
-    replacing it.
-
-    Extracted to module level (was a nested closure inside
-    collect_under_impulse_push) so scripts/go1_collect_flagged_states.py's
-    live-rollout lead-time measurement can reuse the exact same push
-    mechanism/parameters without duplicating this construction-order-
-    sensitive logic."""
-
-    def impulse_env_cfg_factory(play: bool = False):
-        from mjlab.envs.mdp.events import apply_body_impulse
-        from mjlab.managers.event_manager import EventTermCfg
-        from mjlab.managers.scene_entity_config import SceneEntityCfg
-
-        from cartpole_term.go1.env_cfg import go1_velocity_term_env_cfg
-
-        cfg = go1_velocity_term_env_cfg(play=play)
-        # Same construction-order requirement as the velocity mechanism
-        # above -- this event term must exist in cfg.events BEFORE
-        # ManagerBasedRlEnv construction; apply_body_impulse is a
-        # STATEFUL CLASS, instantiated once at env-build time (confirmed
-        # via mjlab/managers/event_manager.py's _prepare_terms), so it
-        # cannot be added to an already-built env at all, not even via
-        # the "mutate params on an existing term" trick the velocity
-        # mechanism uses.
-        cfg.events["wild_impulse"] = EventTermCfg(
-            func=apply_body_impulse,
-            mode="step",
-            params={
-                "force_range": (-force_n, force_n),
-                "torque_range": (-torque_n, torque_n),
-                "duration_s": duration_s,
-                "cooldown_s": cooldown_s,
-                "asset_cfg": SceneEntityCfg("robot", body_names=("trunk",)),
-            },
-        )
-        return cfg
-
-    return impulse_env_cfg_factory
+    return impulse_env_cfg_factory(robot, force_n, torque_n, duration_s, cooldown_s)
 
 
 def collect_under_impulse_push(
@@ -542,45 +502,50 @@ def collect_under_impulse_push(
     target_terminated: int,
     horizon: int,
     device: str,
+    robot: str = "go1",
 ) -> tuple[dict, dict]:
     """Force-impulse mechanism -- see build_impulse_env_cfg_factory for the
     mechanism itself. This function wires it into a runner + the shared
     offline collection/labelling loop (_run_collection_loop)."""
-    from cartpole_term.go1.env_cfg import TASK_ID
-    from cartpole_term.go1.runner import Go1FrozenEvalRunner
+    from cartpole_term.common.backend import get_robot_backend
+    from cartpole_term.common.robot_profile import get_profile
     from cartpole_term.runner import build_runner_from_checkpoint
 
-    impulse_env_cfg_factory = build_impulse_env_cfg_factory(force_n, torque_n, duration_s, cooldown_s)
+    backend = get_robot_backend(robot)
+    profile = get_profile(robot)
+    impulse_env_cfg_factory = build_impulse_env_cfg_factory(force_n, torque_n, duration_s, cooldown_s, robot=robot)
 
     runner = build_runner_from_checkpoint(
         checkpoint_path,
         seed=seed,
         eval_num_envs=num_envs,
         device=device,
-        runner_cls=Go1FrozenEvalRunner,
+        runner_cls=backend.runner_cls,
         env_cfg_factory=impulse_env_cfg_factory,
-        task_id=TASK_ID,
+        task_id=backend.task_id,
         extra_scalar_metric_fn=None,
     )
     env = runner._build_eval_env()
     raw_env = env.unwrapped
 
     print(
-        f"[wild-push] mechanism=impulse, force_range=({-force_n},{force_n})N, "
+        f"[wild-push] robot={robot} mechanism=impulse, force_range=({-force_n},{force_n})N, "
         f"torque_range=({-torque_n},{torque_n})Nm, duration_s={duration_s}, cooldown_s={cooldown_s}, "
-        f"body=trunk (mass-scaled from arXiv:2512.01336's 50-850N via Go1/G1 mass ratio "
-        f"{MASS_SCALE_RATIO:.3f} -> {MASS_SCALED_FORCE_RANGE_N} N reference range)"
+        f"body={profile.push_body}, robot mass {profile.mass_kg} kg"
     )
 
     dataset, sidecar = _run_collection_loop(
         runner, env, raw_env, checkpoint_path, seed, num_envs, target_transitions, target_terminated, horizon, device
     )
     sidecar["mechanism"] = "impulse"
+    sidecar["robot"] = robot
+    sidecar["push_body"] = profile.push_body
     sidecar["force_range_n"] = (-force_n, force_n)
     sidecar["torque_range_nm"] = (-torque_n, torque_n)
     sidecar["duration_s"] = duration_s
     sidecar["cooldown_s"] = cooldown_s
-    sidecar["mass_scaled_reference_range_n"] = MASS_SCALED_FORCE_RANGE_N
+    if robot == "go1":
+        sidecar["mass_scaled_reference_range_n"] = MASS_SCALED_FORCE_RANGE_N
     return dataset, sidecar
 
 
@@ -613,7 +578,8 @@ def feature_screening_generic(features: dict[str, np.ndarray], y: np.ndarray) ->
 
 
 def train_and_evaluate_predictor(
-    dataset: dict, sidecar: dict, seed: int, hidden: tuple[int, int], step_seconds: float, tag: str = ""
+    dataset: dict, sidecar: dict, seed: int, hidden: tuple[int, int], step_seconds: float, tag: str = "",
+    robot: str = "go1",
 ) -> dict:
     """`tag` (default "", zero behavior change for this file's own call
     site below) lets a caller retrain on a DERIVED dataset -- e.g.
@@ -639,7 +605,7 @@ def train_and_evaluate_predictor(
     result = train_predictor(model, x_train, y_train, x_val, y_val, device="cpu", seed=seed)
     model.eval()
 
-    model_save_path = Path("outputs") / f"go1_wildpush_predictor{tag}_seed{seed}.pt"
+    model_save_path = Path("outputs") / f"{robot}_wildpush_predictor{tag}_seed{seed}.pt"
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), model_save_path)
 
@@ -704,6 +670,8 @@ def train_and_evaluate_predictor(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--robot", choices=("go1", "g1"), default="go1",
+                        help="Robot (RobotProfile). Output files are prefixed with it; go1 names are unchanged.")
     parser.add_argument("--checkpoint-file", dest="checkpoint_file", type=str, required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -716,9 +684,9 @@ def main() -> None:
     )
     parser.add_argument("--push-scale", dest="push_scale", type=float, default=WILD_PUSH_SCALE, help="velocity mechanism only.")
     parser.add_argument(
-        "--impulse-force", dest="impulse_force", type=float, default=DEFAULT_IMPULSE_FORCE_N,
-        help=f"impulse mechanism only, Newtons. Mass-scaled reference range from arXiv:2512.01336's own "
-        f"induced-fall force (50-850N) via Go1/G1 mass ratio: {MASS_SCALED_FORCE_RANGE_N} N.",
+        "--impulse-force", dest="impulse_force", type=float, default=None,
+        help="impulse mechanism only, Newtons per axis. Default: the robot's RobotProfile.impulse_force_n "
+        "(Go1 150, G1 390; both mass-scaled from arXiv:2512.01336's 50-850 N, see DEVIATIONS.md).",
     )
     parser.add_argument("--impulse-torque", dest="impulse_torque", type=float, default=DEFAULT_IMPULSE_TORQUE_N, help="impulse mechanism only, Nm. 0.0 default = pure linear force, no added spin.")
     parser.add_argument("--predictor-hidden", dest="predictor_hidden", type=str, default="128,128")
@@ -733,6 +701,14 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required (CLAUDE.md S0.2 / S5.4).")
     device = "cuda"
+
+    from cartpole_term.common.robot_profile import get_profile
+
+    profile = get_profile(args.robot)
+    if args.impulse_force is None:
+        args.impulse_force = profile.impulse_force_n
+    if args.mechanism == "velocity" and args.robot != "go1":
+        raise ValueError("--mechanism velocity is Go1-only (kept for comparison); use the impulse push")
 
     h1, h2 = (int(p) for p in args.predictor_hidden.split(","))
     hidden = (h1, h2)
@@ -759,6 +735,7 @@ def main() -> None:
             target_terminated=target_terminated,
             horizon=PREDICTOR_HORIZON,
             device=device,
+            robot=args.robot,
         )
     else:
         if args.skip_verify:
@@ -784,8 +761,8 @@ def main() -> None:
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    npz_path = outputs_dir / f"go1_wildpush_frozen_seed{args.seed}.npz"
-    json_path = outputs_dir / f"go1_wildpush_frozen_seed{args.seed}.json"
+    npz_path = outputs_dir / f"{args.robot}_wildpush_frozen_seed{args.seed}.npz"
+    json_path = outputs_dir / f"{args.robot}_wildpush_frozen_seed{args.seed}.json"
     np.savez_compressed(npz_path, **dataset)
     json_path.write_text(json.dumps(sidecar, indent=2))
     print(
@@ -796,10 +773,12 @@ def main() -> None:
     print(f"  wrote {npz_path}")
     print(f"  wrote {json_path}")
 
-    step_seconds = 0.02  # Go1: decimation=4, timestep=0.005 -> 50 Hz, confirmed live this session
-    metrics = train_and_evaluate_predictor(dataset, sidecar, seed=args.seed, hidden=hidden, step_seconds=step_seconds)
+    step_seconds = 1.0 / profile.step_hz  # 0.02 s for both robots (live-confirmed, robot_profile.py)
+    metrics = train_and_evaluate_predictor(
+        dataset, sidecar, seed=args.seed, hidden=hidden, step_seconds=step_seconds, robot=args.robot
+    )
 
-    metrics_path = outputs_dir / f"go1_wildpush_metrics_seed{args.seed}.json"
+    metrics_path = outputs_dir / f"{args.robot}_wildpush_metrics_seed{args.seed}.json"
     metrics_path.write_text(json.dumps(metrics, indent=2))
 
     print(

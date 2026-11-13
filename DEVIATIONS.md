@@ -4660,3 +4660,42 @@ in full in its section 3.3.
   - **Checked locally** by running the A3 cell against fake training:
     resuming each chunk, skipping on a rerun, skipping a corrupt newest
     checkpoint, the guard firing, and `None` overriding it.
+
+## G1 port, stages 2-3: push and predictor (2026-11-13, before any G1 data)
+
+- **Walker accepted (user, from the walker2 videos):** walks, falls no more
+  than the frozen evaluation shows, and tracks speed (training
+  `track_linear_velocity` 1.52 at the full command range). The gait looks slow
+  and stiff. The slow part is at least partly the video: a fresh video env
+  starts mjlab's command curriculum at its initial range. The stiffness
+  matches mjlab's tight G1 posture reward. Kept as the walker for the fall
+  study.
+- **Push, fixed now:** impulse ±390 N per axis on `torso_link`, with the same
+  duration (0.1-0.3 s), cooldown (1-3 s), zero torque and mild shipped push
+  as the Go1. The rule is the Go1's: scale arXiv:2512.01336's 50-850 N
+  humanoid range by mass. Equivalently, Go1's 150 N times 33.3411 / 12.7434
+  kg (masses summed from the `<inertial>` tags of mjlab 1.6.0's g1.xml and
+  go1.xml) is 392 N, the same acceleration, rounded to 390. The body is
+  `torso_link`, the upper body above the waist joints, as in
+  `docs/G1_PORT_PLAN.md`; the G1's root body (pelvis) sits at hip height.
+- **Check, fixed now:** falls per 1,000 robot-steps at 390 N, measured like
+  the Go1's collections (4,096 robots, 262 steps from reset; the Go1 at
+  150 N scored 1.03-1.09 over its five collections, mean 1.07). It must lie
+  within 0.25x-4x of the Go1's. If it does not, the notebook stops and the
+  force is decided with the user and logged here, not picked from the sweep
+  in the notebook. The 200/300/500/600 N rows are context only. A video under
+  the push (B2) is the plausibility check, as for the Go1.
+- **Predictor:** unchanged from the Go1. 16-step label horizon, 70/15/15
+  episode split, MLP 128→128→128→1 (input 99 obs + 29 actions), logistic
+  regression baseline, F1 threshold on validation, ≥1M labelled steps and
+  ≥1,000 falls, episode-bootstrap statistics. One seed first.
+- **Code:**
+  - The impulse push moved to `src/cartpole_term/common/push.py`. For the
+    Go1 the definition is identical: same event, params and body.
+  - `RobotProfile` gained `push_body`, `mass_kg` and `impulse_force_n`.
+  - `go1_wild_push_predictor.py` takes `--robot` (default `go1`, file names
+    unchanged for it; G1 files are prefixed `g1_`).
+  - `measure_push_failure_rate.py --mechanism impulse` runs the sweep.
+  - `robot_watch_episodes.py --impulse-force` records under the push.
+  - New `tests/test_push.py`.
+  - Notebook: `notebooks/g1_predictor.ipynb`.

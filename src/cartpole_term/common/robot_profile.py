@@ -37,6 +37,10 @@ class RobotProfile:
     vulnerability_regions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     step_hz: float | None = None
     max_episode_steps: int | None = None
+    # Push used for the fall dataset, predictor and everything after it.
+    push_body: str | None = None  # body the apply_body_impulse wrench acts on
+    mass_kg: float | None = None  # sum of <inertial mass> in mjlab 1.6.0's robot XML
+    impulse_force_n: float | None = None  # +-N per axis
 
 
 GO1 = RobotProfile(
@@ -56,6 +60,9 @@ GO1 = RobotProfile(
     expected_action_dim=12,
     step_hz=50.0,  # decimation=4, timestep=0.005 -> 0.02s/step
     max_episode_steps=1000,  # episode_length_s=20.0 / 0.02s
+    push_body="trunk",
+    mass_kg=12.7434,
+    impulse_force_n=150.0,  # DEVIATIONS.md: mass-scaled from arXiv:2512.01336's 50-850 N, locked
     # Live-confirmed actor obs term order (inspect_robot_task.py's
     # ObservationManager dump): base_lin_vel(3) + base_ang_vel(3) +
     # projected_gravity(3) + joint_pos(12) + joint_vel(12) + actions(12) +
@@ -110,6 +117,12 @@ G1 = RobotProfile(
     expected_action_dim=29,
     step_hz=50.0,
     max_episode_steps=1000,
+    # Upper body above the waist joints, where a shove lands (G1_PORT_PLAN.md).
+    push_body="torso_link",
+    mass_kg=33.3411,
+    # Same rule as the Go1, same acceleration: 150 N x 33.34 / 12.74 = 392 N,
+    # rounded (DEVIATIONS.md, 2026-11-13).
+    impulse_force_n=390.0,
     # Live-confirmed actor obs term order, same method as Go1's above:
     # base_lin_vel(3) + base_ang_vel(3) + projected_gravity(3) +
     # joint_pos(29) + joint_vel(29) + actions(29) + command(3) = 99.

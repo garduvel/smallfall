@@ -176,6 +176,78 @@ def run_one_config(
     }
 
 
+# Go1 reference for the impulse sweep: falls per 1,000 robot-steps in the five
+# 150 N predictor collections of the multi-seed run (4096 robots x 262 steps
+# from reset each; 1.03-1.09, mean 1.07). Measured the same way below.
+GO1_150N_FALLS_PER_1000_STEPS = 1.07
+IMPULSE_SWEEP_STEPS = 262
+IMPULSE_SWEEP_NUM_ENVS = 4096
+
+
+def run_impulse_config(checkpoint_path: str, robot: str, backend, force_n: float, seed: int,
+                       num_envs: int, steps: int, device: str) -> dict:
+    """Falls per 1,000 robot-steps under the impulse push at `force_n`, over
+    `steps` steps from reset with `num_envs` robots (fallen robots reset and
+    keep counting), i.e. the same exposure as the predictor collection."""
+    from cartpole_term.common.push import impulse_env_cfg_factory
+    from cartpole_term.runner import build_runner_from_checkpoint
+
+    runner = build_runner_from_checkpoint(
+        checkpoint_path, seed=seed, eval_num_envs=num_envs, device=device,
+        runner_cls=backend.runner_cls, env_cfg_factory=impulse_env_cfg_factory(robot, force_n),
+        task_id=backend.task_id, extra_scalar_metric_fn=None,
+    )
+    actor_snapshot = {k: v.clone() for k, v in runner.alg.actor.state_dict().items()}
+    runner.alg.eval_mode()
+    env = runner._build_eval_env()
+    t0 = time.time()
+    falls = 0
+    with torch.inference_mode():
+        env.seed(seed)
+        obs, _ = env.reset()
+        obs = obs.to(device)
+        for _ in range(steps):
+            actions = runner.alg.actor(obs, stochastic_output=True)
+            obs, _r, dones, extras = env.step(actions)
+            obs = obs.to(device)
+            time_outs = extras.get("time_outs")
+            truncated = time_outs.bool() if time_outs is not None else torch.zeros_like(dones.bool())
+            falls += int((dones.bool() & ~truncated).sum().item())
+    for name, before in actor_snapshot.items():
+        assert torch.equal(before, runner.alg.actor.state_dict()[name]), f"actor.{name} changed"
+    env.close()
+    robot_steps = num_envs * steps
+    return {"force_n": force_n, "num_envs": num_envs, "steps": steps, "falls": falls,
+            "robot_steps": robot_steps, "falls_per_1000_steps": 1000 * falls / robot_steps,
+            "wall_time_s": time.time() - t0}
+
+
+def impulse_sweep(args, profile, backend, device: str) -> None:
+    forces = args.impulse_forces or [profile.impulse_force_n]
+    rows = []
+    for f in forces:
+        print(f"[push-tuning] robot={args.robot} impulse +-{f} N on {profile.push_body}: measuring...")
+        row = run_impulse_config(args.checkpoint_file, args.robot, backend, f, args.seed,
+                                 args.num_envs, args.steps, device)
+        rows.append(row)
+        print(f"[push-tuning]   {f:.0f} N: {row['falls']} falls in {row['robot_steps']:,} robot-steps = "
+              f"{row['falls_per_1000_steps']:.2f} per 1,000 (Go1 at 150 N: {GO1_150N_FALLS_PER_1000_STEPS})")
+    chosen = next((r for r in rows if r["force_n"] == profile.impulse_force_n), None)
+    verdict = None
+    if chosen is not None:
+        ratio = chosen["falls_per_1000_steps"] / GO1_150N_FALLS_PER_1000_STEPS
+        verdict = {"force_n": profile.impulse_force_n, "ratio_to_go1": ratio, "within_quarter_to_4x": 0.25 <= ratio <= 4.0}
+        print(f"[push-tuning] chosen force {profile.impulse_force_n} N: {ratio:.2f}x the Go1's fall rate "
+              f"-> {'within' if verdict['within_quarter_to_4x'] else 'OUTSIDE'} the pre-set 0.25x-4x check (DEVIATIONS.md)")
+    out = Path("outputs") / f"{profile.name}_impulse_sweep_seed{args.seed}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"robot": profile.name, "push_body": profile.push_body,
+                               "checkpoint_path": args.checkpoint_file,
+                               "go1_150n_falls_per_1000_steps": GO1_150N_FALLS_PER_1000_STEPS,
+                               "results": rows, "chosen_force_check": verdict}, indent=2))
+    print(f"[push-tuning] wrote {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--robot", required=True, choices=("go1", "g1"))
@@ -187,6 +259,12 @@ def main() -> None:
         "--velocity-scales", dest="velocity_scales", type=float, nargs="+", default=DEFAULT_VELOCITY_SCALES,
         help="Multiplicative scale factors applied to mjlab's shipped push_robot velocity_range.",
     )
+    parser.add_argument("--mechanism", choices=("velocity", "impulse"), default="velocity",
+                        help="'impulse': falls per 1,000 robot-steps under the dataset push at each --impulse-forces.")
+    parser.add_argument("--impulse-forces", dest="impulse_forces", type=float, nargs="+", default=None,
+                        help="impulse only, N per axis; default the robot's RobotProfile.impulse_force_n")
+    parser.add_argument("--num-envs", dest="num_envs", type=int, default=IMPULSE_SWEEP_NUM_ENVS, help="impulse only")
+    parser.add_argument("--steps", type=int, default=IMPULSE_SWEEP_STEPS, help="impulse only")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -197,6 +275,12 @@ def main() -> None:
 
     profile = get_profile(args.robot)
     backend = get_robot_backend(args.robot)
+
+    if args.mechanism == "impulse":
+        if args.smoke:
+            args.num_envs, args.steps = SMOKE_NUM_ENVS, 20
+        impulse_sweep(args, profile, backend, device)
+        return
 
     base_env_cfg = backend.env_cfg_factory(play=False)
     base_velocity_range = dict(base_env_cfg.events["push_robot"].params["velocity_range"])
