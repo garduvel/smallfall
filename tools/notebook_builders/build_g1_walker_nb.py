@@ -26,7 +26,7 @@ start from the checkpoint this one produces.
 | 0 | install, clone the repo, mount Drive | ~3 min |
 | A1 | inspect the task (confirms 99 obs / 29 actions) | ~2 min |
 | A2 | 3-iteration smoke test (first session only) | ~3 min |
-| A3 | **train the walker, 10,000 iterations** (mjlab ships 30,000; see `DEVIATIONS.md`) | many hours, unmeasured; expect longer than the Go1's |
+| A3 | **train the walker, 10,000 iterations** in 2,000-iteration chunks, each followed by a speed-tracking check and a short video (mjlab ships 30,000; see `DEVIATIONS.md`) | many hours, unmeasured; expect longer than the Go1's |
 | A4 | frozen-evaluation curve | seconds |
 | A5 | video of the trained walker | ~3 min |
 | Z | download the Drive folder as a zip | ~1 min |
@@ -75,6 +75,11 @@ RUN_NAME = "walker2"           # Drive folder for this run; a new name starts a 
 #   walker1 = first attempt, air_time 0.25, learned to sit (DEVIATIONS.md 2026-11-12)
 TOTAL_ITERATIONS = 10_000      # user's budget (mjlab ships 30,000 for the G1)
 CHECKPOINT_EVERY = 500         # also the frozen-evaluation interval
+CHUNK = 2_000                  # train in chunks; after each: tracking reward + 1-episode video
+GUARD_FROM_ITERATION = 4_000   # from here on, stop if the robot is not tracking speed...
+STOP_IF_TRACKING_BELOW = 0.8   # ...i.e. training reward track_linear_velocity below this (walker1 sat at 0.43).
+#   An invented, loose guard (no published G1 learning curve to set it from). None = never stop.
+VIDEO_EACH_CHUNK = True
 SEED = 0
 NUM_ENVS = 4096
 EXPERIMENT = "g1_velocity_term"            # set in src/cartpole_term/g1/rl_cfg.py
@@ -167,45 +172,100 @@ else:
 """)
 
 md("""
-## A3. Train the walker, 10,000 iterations
+## A3. Train the walker, 10,000 iterations, in chunks
 
-Checked in this order: a finished walker is already at `WALKER` or on Drive
-(nothing to do); a run on Drive has a readable checkpoint (resume from the
-newest); otherwise start fresh. Logs, checkpoints, TensorBoard events and
-`eval_history.json` go straight to Drive through a link, so a disconnect loses
-at most `CHECKPOINT_EVERY` iterations. The cell prints which case it took.
+Training runs to 2,000, 4,000, ... 10,000 iterations, resuming from the last
+checkpoint each time. After each chunk the cell prints the speed-tracking
+reward (higher = moving as commanded; walker1, which sat, ended at 0.43) and
+shows a 20-second video of the newest policy, so a policy that is going wrong
+is visible after hours, not at the end.
+
+**Guard:** from iteration 4,000 on, if the tracking reward is still below
+`STOP_IF_TRACKING_BELOW`, training stops before the next chunk and says so.
+To carry on anyway, set it to `None` in 0c, re-run 0c, then run this cell.
+
+Logs, checkpoints and TensorBoard events go straight to Drive, so a
+disconnect loses at most `CHECKPOINT_EVERY` iterations; **run all** again
+with the same `RUN_NAME` to continue.
 """)
 code("""
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
 local_logs = f"logs/rsl_rl/{EXPERIMENT}"
 if os.path.islink(local_logs):
     os.unlink(local_logs)
 shutil.rmtree(local_logs, ignore_errors=True)
 os.symlink(DRIVE_LOGS, local_logs)
 
-common = (f"--robot g1 --seeds {SEED} --max-iterations {TOTAL_ITERATIONS} "
-          f"--eval.interval {CHECKPOINT_EVERY} --env.scene.num-envs {NUM_ENVS}")
-runs = drive_run_dirs()
-if len(runs) > 1:
-    print("WARNING: several runs in", DRIVE_LOGS, "-- using the newest:", runs[-1])
-run_dir = runs[-1] if runs else None
+TRAIN = f"--robot g1 --seeds {SEED} --eval.interval {CHECKPOINT_EVERY} --env.scene.num-envs {NUM_ENVS}"
+targets = sorted(set(range(CHUNK, TOTAL_ITERATIONS, CHUNK)) | {TOTAL_ITERATIONS})
+
+def current_run():
+    runs = drive_run_dirs()
+    if len(runs) > 1:
+        print("WARNING: several runs in", DRIVE_LOGS, "-- using the newest:", runs[-1])
+    return runs[-1] if runs else None
+
+def newest_readable(run_dir):
+    return next((p for p in checkpoints_newest_first(run_dir) if readable(p)), None) if run_dir else None
+
+def iteration_of(path):
+    return int(re.search(r"model_(\\d+)\\.pt$", path).group(1))
+
+def recent_mean(run_dir, tag, n=50):
+    \"\"\"Mean of the last n logged values of a training scalar (None if not logged yet).\"\"\"
+    acc = EventAccumulator(run_dir, size_guidance={"scalars": 0}); acc.Reload()
+    if tag not in acc.Tags()["scalars"]:
+        return None
+    vals = [e.value for e in acc.Scalars(tag)][-n:]
+    return sum(vals) / len(vals)
+
+def report(run_dir, ckpt):
+    it = iteration_of(ckpt)
+    track = recent_mean(run_dir, "Episode_Reward/track_linear_velocity")
+    air = recent_mean(run_dir, "Episode_Reward/air_time")
+    fmt = lambda v: "not logged" if v is None else f"{v:.3f}"
+    print(f"=== {it + 1:,} iterations done: speed-tracking reward {fmt(track)} "
+          f"(walker1, which sat: 0.434); air_time {fmt(air)} (should be 0 or not logged now) ===")
+    if VIDEO_EACH_CHUNK:
+        !python scripts/robot_watch_episodes.py --robot g1 --checkpoint-file {ckpt} --episodes 1 --camera-distance 3.5 --seed {SEED}
+        if _exit_code == 0:
+            v = f"outputs/g1_walker_{RUN_NAME}_it{it + 1}.mp4"
+            shutil.move(f"outputs/g1_watch_seed{SEED}_ep1.mp4", v)
+            save(v)
+            display(Video(v, embed=True, width=480))
+        else:
+            print("video failed (training continues) -- scroll up for the error")
+    return it, track
 
 if restore(WALKER):
     print("finished walker already present:", WALKER)
-elif run_dir and os.path.exists(os.path.join(run_dir, FINAL_NAME)) and readable(os.path.join(run_dir, FINAL_NAME)):
-    print("training had finished; copying", FINAL_NAME)
 else:
-    resume = next((p for p in checkpoints_newest_first(run_dir) if readable(p)), None) if run_dir else None
-    if resume:
-        print("RESUMING from", resume)
-        !python scripts/robot_train.py {common} --resume-from {resume}
-    else:
-        print(f"TRAINING FROM SCRATCH: {TOTAL_ITERATIONS:,} iterations, many hours.")
-        !python scripts/robot_train.py {common}
-    assert _exit_code == 0, f"walker training failed (exit {_exit_code}) -- re-run this cell to resume"
-    run_dir = drive_run_dirs()[-1]
+    for target in targets:
+        run_dir = current_run()
+        chunk_end = os.path.join(run_dir, f"model_{target - 1}.pt") if run_dir else None
+        if chunk_end and os.path.exists(chunk_end) and readable(chunk_end):
+            continue                                   # chunk finished in an earlier session
+        resume = newest_readable(run_dir)
+        if resume:
+            done = iteration_of(resume) + 1
+            track = recent_mean(run_dir, "Episode_Reward/track_linear_velocity")
+            if (STOP_IF_TRACKING_BELOW is not None and done >= GUARD_FROM_ITERATION
+                    and track is not None and track < STOP_IF_TRACKING_BELOW):
+                raise RuntimeError(
+                    f"GUARD: after {done:,} iterations the speed-tracking reward is {track:.3f}, below "
+                    f"{STOP_IF_TRACKING_BELOW}. The robot is probably not walking (watch the last video). "
+                    "Training stopped. To continue anyway set STOP_IF_TRACKING_BELOW = None in 0c.")
+            print(f"RESUMING from {resume} -> {target:,} iterations")
+            !python scripts/robot_train.py {TRAIN} --max-iterations {target} --resume-from {resume}
+        else:
+            print(f"TRAINING FROM SCRATCH: first chunk, to {target:,} iterations")
+            !python scripts/robot_train.py {TRAIN} --max-iterations {target}
+        assert _exit_code == 0, f"walker training failed (exit {_exit_code}) -- run this cell again to resume"
+        run_dir = current_run()
+        report(run_dir, newest_readable(run_dir))
 
-if not os.path.exists(WALKER):
-    final = os.path.join(run_dir, FINAL_NAME)
+    final = os.path.join(current_run(), FINAL_NAME)
     assert os.path.exists(final), f"{final} missing -- training did not reach {TOTAL_ITERATIONS} iterations"
     shutil.copy(final, WALKER)
     save(WALKER)

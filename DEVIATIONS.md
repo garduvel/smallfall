@@ -4642,3 +4642,21 @@ in full in its section 3.3.
   feet. If it sits again with mjlab's own recipe, the 10,000-iteration budget
   (against mjlab's 30,000) becomes the next suspect, and training continues
   from the final checkpoint.
+- **Walker2 safeguards (2026-11-12, before it runs):**
+  - **Reference search:** no published learning curve for mjlab's stock G1
+    flat walker was found. mjlab's paper and docs give only a
+    `--agent.max-iterations 10_000` usage example and qualitative videos.
+    Unitree's own mjlab G1 walker (github.com/unitreerobotics/unitree_rl_mjlab)
+    trains for 10,001 iterations, so the 10,000 budget is normal. It does use
+    a different reward set: a phase-based `feet_gait` term, `stand_still`,
+    `is_terminated` at -200, and a phase observation. Those functions are not
+    in mjlab 1.6.0, so porting them would be its own untested change. Not done.
+  - **Chunked training:** A3 now trains in 2,000-iteration chunks (resuming
+    each time). After each chunk it prints the training speed-tracking reward
+    (mean of the last 50 logged values) and renders a one-episode video.
+  - **Guard (invented, loose):** from 4,000 iterations on, training stops
+    before the next chunk if that reward is below 0.8. Walker1 ended at 0.434,
+    which is weight 2 times a mean tracking score of 0.22.
+  - **Checked locally** by running the A3 cell against fake training:
+    resuming each chunk, skipping on a rerun, skipping a corrupt newest
+    checkpoint, the guard firing, and `None` overriding it.
