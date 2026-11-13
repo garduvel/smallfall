@@ -58,9 +58,9 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 import cartpole_term.protective  # noqa: F401,E402 -- registers the task
-from cartpole_term.common.robot_profile import GO1  # noqa: E402
+from cartpole_term.common.robot_profile import get_profile  # noqa: E402
 from cartpole_term.protective.compare import PASS_METRICS, FirstFallTracker, summarize, verdict  # noqa: E402
-from cartpole_term.protective.env_cfg import TASK_ID, go1_protective_fall_env_cfg  # noqa: E402
+from cartpole_term.protective.env_cfg import TASK_IDS, protective_fall_env_cfg  # noqa: E402
 from cartpole_term.protective.runner import ProtectiveFrozenEvalRunner  # noqa: E402
 from cartpole_term.runner import build_runner_from_checkpoint  # noqa: E402
 from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
@@ -70,8 +70,9 @@ ARMS = ("protective", "walker", "limp")
 LIMP_TORQUE_TOLERANCE_NM = 1e-4
 
 
-def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False):
-    cfg = go1_protective_fall_env_cfg(play=False, state_bank_file=state_bank_file)
+def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False, robot: str = "go1"):
+    # Rewards never affect a replay, so the Go1 weights are fine for any robot.
+    cfg = protective_fall_env_cfg(robot, play=False, state_bank_file=state_bank_file)
     cfg.scene.num_envs = num_envs
     cfg.auto_reset = False
     cfg.events["reset_fall_state"].params["sequential"] = True
@@ -96,22 +97,23 @@ def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False):
 
 def _load_actor(checkpoint: str, args, device: str):
     def factory(play: bool = False):
-        return go1_protective_fall_env_cfg(play=play, state_bank_file=args.state_bank_file)
+        return protective_fall_env_cfg(args.robot, play=play, state_bank_file=args.state_bank_file)
 
     runner = build_runner_from_checkpoint(
         checkpoint, seed=args.seed, eval_num_envs=1, device=device,
         runner_cls=ProtectiveFrozenEvalRunner, env_cfg_factory=factory,
-        task_id=TASK_ID, extra_scalar_metric_fn=None,
+        task_id=TASK_IDS[args.robot], extra_scalar_metric_fn=None,
     )
     runner.alg.eval_mode()
     return runner.alg.actor
 
 
 def run_arm(arm: str, actor, args, num_envs: int, device: str):
-    env = ManagerBasedRlEnv(cfg=_env_cfg(args.state_bank_file, num_envs, limp=(arm == "limp")), device=device)
+    env = ManagerBasedRlEnv(cfg=_env_cfg(args.state_bank_file, num_envs, limp=(arm == "limp"), robot=args.robot),
+                            device=device)
     robot = env.scene["robot"]
     sensor = env.scene[CONTACT_SENSOR]
-    critical = set(GO1.vulnerability_regions["high"])
+    critical = set(get_profile(args.robot).vulnerability_regions["high"])
     critical_mask = torch.tensor([n in critical for n in sensor.primary_names], device=device)
     assert critical_mask.any(), f"no critical bodies among sensor primaries {sensor.primary_names}"
 
@@ -164,6 +166,7 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--robot", choices=("go1", "g1"), default="go1")
     p.add_argument("--protective-checkpoint", required=True)
     p.add_argument("--walker-checkpoint", default="checkpoints/model_9999.pt")
     p.add_argument("--state-bank-file", default="outputs/go1_fall_state_bank_seed0.npz")
@@ -181,7 +184,7 @@ def main() -> None:
 
     bank_size = len(np.load(args.state_bank_file)["episode_id"])
     num_envs = min(args.num_states or bank_size, bank_size)
-    out_path = Path(args.output or f"outputs/go1_protective_compare_seed{args.seed}.json")
+    out_path = Path(args.output or f"outputs/{args.robot}_protective_compare_seed{args.seed}.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[compare] {num_envs} fall states x {len(ARMS)} arms")
 

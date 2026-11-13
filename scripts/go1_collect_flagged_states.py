@@ -130,13 +130,14 @@ def collect_flagged_states(
     capture_state_bank: bool,
     device: str,
     capture_at_flag: bool = False,
+    robot: str = "go1",
 ) -> tuple[dict, dict, dict | None]:
-    from cartpole_term.go1.env_cfg import TASK_ID
-    from cartpole_term.go1.runner import Go1FrozenEvalRunner
+    from cartpole_term.common.backend import get_robot_backend
     from cartpole_term.runner import build_runner_from_checkpoint
 
+    backend = get_robot_backend(robot)
     base_impulse_factory = build_impulse_env_cfg_factory(
-        force_n, torque_n, DEFAULT_IMPULSE_DURATION_S, DEFAULT_IMPULSE_COOLDOWN_S
+        force_n, torque_n, DEFAULT_IMPULSE_DURATION_S, DEFAULT_IMPULSE_COOLDOWN_S, robot=robot
     )
 
     def impulse_env_cfg_factory(play: bool = False):
@@ -153,9 +154,9 @@ def collect_flagged_states(
         seed=seed,
         eval_num_envs=num_envs,
         device=device,
-        runner_cls=Go1FrozenEvalRunner,
+        runner_cls=backend.runner_cls,
         env_cfg_factory=impulse_env_cfg_factory,
-        task_id=TASK_ID,
+        task_id=backend.task_id,
         extra_scalar_metric_fn=None,
     )
     env = runner._build_eval_env()
@@ -165,7 +166,7 @@ def collect_flagged_states(
     predictor = _load_predictor(predictor_file, obs_action_dim, predictor_hidden, device)
 
     print(
-        f"[flagged-states] mechanism=impulse, force=+-{force_n}N, torque=+-{torque_n}Nm, "
+        f"[flagged-states] robot={robot} mechanism=impulse, force=+-{force_n}N, torque=+-{torque_n}Nm, "
         f"threshold={threshold:.4f}, target_trials={target_trials}, "
         f"hold_post_fall_steps={hold_post_fall_steps}"
     )
@@ -560,11 +561,14 @@ def collect_flagged_states(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--robot", choices=("go1", "g1"), default="go1",
+                        help="output files are prefixed with it; go1 names are unchanged")
     parser.add_argument("--checkpoint-file", dest="checkpoint_file", type=str, required=True)
     parser.add_argument("--predictor-file", dest="predictor_file", type=str, default="outputs/go1_wildpush_predictor_seed0.pt")
     parser.add_argument("--metrics-file", dest="metrics_file", type=str, default="outputs/go1_wildpush_metrics_seed0.json")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--impulse-force", dest="impulse_force", type=float, default=DEFAULT_IMPULSE_FORCE_N)
+    parser.add_argument("--impulse-force", dest="impulse_force", type=float, default=None,
+                        help="N per axis; default the robot's RobotProfile.impulse_force_n (Go1 150, G1 200)")
     parser.add_argument("--impulse-torque", dest="impulse_torque", type=float, default=DEFAULT_IMPULSE_TORQUE_N)
     parser.add_argument("--num-envs", dest="num_envs", type=int, default=DEFAULT_NUM_ENVS)
     parser.add_argument("--target-trials", dest="target_trials", type=int, default=DEFAULT_TARGET_TRIALS)
@@ -597,6 +601,10 @@ def main() -> None:
         raise RuntimeError("CUDA GPU required (CLAUDE.md S0.2 / S5.4).")
     device = "cuda"
 
+    from cartpole_term.common.robot_profile import get_profile
+
+    if args.impulse_force is None:
+        args.impulse_force = get_profile(args.robot).impulse_force_n
     metrics = json.loads(Path(args.metrics_file).read_text())
     obs_action_dim = int(metrics["obs_action_dim"])
     predictor_hidden = tuple(metrics["predictor_hidden"])
@@ -620,12 +628,13 @@ def main() -> None:
         hold_post_fall_steps=args.hold_post_fall_steps,
         device=device,
         capture_at_flag=args.capture_at_flag,
+        robot=args.robot,
     )
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    npz_path = outputs_dir / f"go1_flagged_states_seed{args.seed}.npz"
-    json_path = outputs_dir / f"go1_flagged_states_seed{args.seed}.json"
+    npz_path = outputs_dir / f"{args.robot}_flagged_states_seed{args.seed}.npz"
+    json_path = outputs_dir / f"{args.robot}_flagged_states_seed{args.seed}.json"
     np.savez_compressed(npz_path, **dataset)
     json_path.write_text(json.dumps(sidecar, indent=2))
 
@@ -653,7 +662,7 @@ def main() -> None:
     print(f"  wrote {json_path}")
 
     if state_bank is not None:
-        bank_name = "go1_flag_state_bank" if args.capture_at_flag else "go1_fall_state_bank"
+        bank_name = f"{args.robot}_flag_state_bank" if args.capture_at_flag else f"{args.robot}_fall_state_bank"
         bank_path = outputs_dir / f"{bank_name}_seed{args.seed}.npz"
         np.savez_compressed(bank_path, **state_bank)
         print(

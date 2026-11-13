@@ -80,9 +80,9 @@ import torch  # noqa: E402
 
 import cartpole_term.protective  # noqa: F401,E402 -- side effect: registers the task
 from cartpole_term.protective.env_cfg import (  # noqa: E402
-    PROTECTIVE_EPISODE_LENGTH_S,
-    TASK_ID,
-    go1_protective_fall_env_cfg,
+    PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT,
+    TASK_IDS,
+    protective_fall_env_cfg,
 )
 from cartpole_term.protective.runner import ProtectiveFrozenEvalRunner  # noqa: E402
 from cartpole_term.runner import build_runner_from_checkpoint  # noqa: E402
@@ -94,7 +94,8 @@ STEP_SECONDS = 0.02  # Go1: decimation=4, timestep=0.005 -> 50 Hz
 # env_cfg.py/terminations.py) -- this is a SAFETY bound only, derived from
 # the env's own safety-cap budget so it never fights the env's own
 # time_out. +1 step of slack for the render-then-step frame ordering below.
-MAX_STEPS_PER_EPISODE = round(PROTECTIVE_EPISODE_LENGTH_S / STEP_SECONDS) + 1
+# Longest episode budget of any robot (the G1's 5 s), so one cap fits both.
+MAX_STEPS_PER_EPISODE = round(max(PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT.values()) / STEP_SECONDS) + 1
 MAX_TOTAL_STEPS_PER_EPISODE_BUDGET = MAX_STEPS_PER_EPISODE
 # Log-only space metrics (src/cartpole_term/protective/space.py), reported
 # by mjlab in the step's extras["log"] on the step an episode resets.
@@ -102,7 +103,7 @@ SPACE_METRICS = ("fall_envelope_radius", "root_travel_at_end", "body_spread_at_e
 
 
 def _build_watch_env_cfg(args: argparse.Namespace):
-    cfg = go1_protective_fall_env_cfg(play=False, state_bank_file=args.state_bank_file)
+    cfg = protective_fall_env_cfg(args.robot, play=False, state_bank_file=args.state_bank_file)
     cfg.scene.num_envs = 1
     cfg.viewer.azimuth = args.camera_azimuth
     cfg.viewer.elevation = args.camera_elevation
@@ -120,7 +121,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
     print(f"[protective-watch] loading checkpoint {args.checkpoint_file}")
 
     def env_cfg_factory(play: bool = False):
-        return go1_protective_fall_env_cfg(play=play, state_bank_file=args.state_bank_file)
+        return protective_fall_env_cfg(args.robot, play=play, state_bank_file=args.state_bank_file)
 
     runner = build_runner_from_checkpoint(
         args.checkpoint_file,
@@ -129,7 +130,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
         device=device,
         runner_cls=ProtectiveFrozenEvalRunner,
         env_cfg_factory=env_cfg_factory,
-        task_id=TASK_ID,
+        task_id=TASK_IDS[args.robot],
         extra_scalar_metric_fn=None,
     )
     actor_snapshot = {k: v.clone() for k, v in runner.alg.actor.state_dict().items()}
@@ -210,7 +211,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    final_path = outputs_dir / f"go1_protective_watch_seed{args.seed}_ep{args.episodes}.mp4"
+    final_path = outputs_dir / f"{args.robot}_protective_watch_seed{args.seed}_ep{args.episodes}.mp4"
     fps = round(1.0 / STEP_SECONDS)
     writer = imageio.get_writer(str(final_path), fps=fps)
     for frame in frames:
@@ -223,6 +224,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--robot", choices=("go1", "g1"), default="go1")
     parser.add_argument("--checkpoint-file", dest="checkpoint_file", type=str, required=True)
     parser.add_argument(
         "--state-bank-file", dest="state_bank_file", type=str, default="outputs/go1_fall_state_bank_seed0.npz",

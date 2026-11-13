@@ -4730,3 +4730,56 @@ in full in its section 3.3.
     biped over far more readily.
 - `RobotProfile.G1.impulse_force_n = 200.0`. The notebook now computes the
   check for `PUSH_N` from the saved sweep rows, so the saved sweep is reused.
+
+## G1 port, stages 4-8: SmallFall for the humanoid (2026-11-13, before any G1 protective data)
+
+- **Predictor result that this builds on** (`g1_predictor.ipynb`, seed 0,
+  200 N): test AUPRC 0.944 [0.934-0.953], logistic regression 0.894, chance
+  0.022. Every test falling episode (204/204) was flagged; median lead 0.30 s
+  (at the 16-step cap). The push video was judged plausible by the user.
+- **Procedure:** the Go1's final run (round 8b), with only robot-specific
+  numbers re-derived by the Go1's rules:
+  - **Banks:** flag-moment states captured live (walker + 200 N + predictor
+    seed 0). One bank seed per role: training 5, selection 3, test 4. The Go1
+    multi-seed run used 1000·s + role for training (5) and test (4); 3 is new,
+    for selection.
+  - **Episode budget:** 5 s. The Go1's 3 s is scaled by √(start height)
+    (0.76 m G1 pelvis against the 0.278 m Go1 trunk, mjlab init_state): fall
+    time ∝ √h, ×1.65, giving 4.96 s. It is a safety cap; `settled` ends
+    episodes.
+  - **Reward:** the Go1 round-8 reward. The contact-force categories come
+    from the G1 profile: critical = pelvis, torso and waist links; all other
+    G1 bodies non-critical.
+    - arXiv:2512.01336 weights (contact force, root velocity, action rate)
+      are kept.
+    - The four Go1-calibrated weights (joint torques, joint limits, ground
+      covered, peak force) are re-sized by
+      `protective/calibration.py`. Train 11 iterations with the Go1 weights;
+      then weight × (Go1 contribution / G1 contribution), where contribution
+      is mean `Episode_Reward/<term>` over iterations 0-10. The Go1
+      reference is the same window of round 8b: torques −0.0580, joint
+      limits −0.0016, ground covered −0.1190, peak force −0.1787. Factor
+      clamped to 0.02-50.
+    - Checked locally: run on round 8b's own log, the script returns the
+      Go1 weights (factors 0.99-1.00).
+  - **Training:** 301 iterations, 4,096 envs, the Go1's PPO settings.
+  - **Selection:** candidates at iterations 100/150/200/250/300 on the
+    selection bank, chosen by the unchanged `select_checkpoint` rule.
+  - **Test:** once, on the test bank: SmallFall against the walker
+    continuing and limp, with the same verdict code as the Go1.
+- **Not yet:** the live hand-off check (Go1 Gate 6), several seeds, and the
+  multi-seed statistics. These come after this notebook's result.
+- **Code:**
+  - `protective_fall_env_cfg(robot, ..., weight_overrides)`.
+    `go1_protective_fall_env_cfg` is now a wrapper giving the identical Go1
+    task (new test pins its weights, task id and budget).
+  - G1 protective task registered (`Mjlab-G1-Protective-Fall`, experiment
+    `g1_protective_fall`).
+  - `--robot` on `go1_collect_flagged_states.py`, `go1_train_protective.py`
+    (plus `--weights-json`), `go1_protective_compare.py` and
+    `go1_watch_protective_episodes.py`. Their Go1 defaults and file names are
+    unchanged. The watch script's per-episode step cap is now the longest
+    robot budget (251); Go1 episodes still end at their own 150-step
+    time-out.
+  - New `scripts/robot_calibrate_protective.py`.
+  - Notebook: `notebooks/g1_smallfall.ipynb`.

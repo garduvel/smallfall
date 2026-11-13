@@ -23,6 +23,7 @@ Run on the GPU machine, from the repo root:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from dataclasses import asdict
@@ -44,7 +45,7 @@ from cartpole_term.cli import (  # noqa: E402
     SMOKE_MAX_ITERATIONS,
     SMOKE_NUM_ENVS,
 )
-from cartpole_term.protective.env_cfg import TASK_ID  # noqa: E402
+from cartpole_term.protective.env_cfg import TASK_IDS  # noqa: E402
 from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
 from mjlab.rl import RslRlVecEnvWrapper  # noqa: E402
 from mjlab.tasks.registry import load_rl_cfg, load_runner_cls  # noqa: E402
@@ -65,15 +66,22 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
             "has no meaningful reset behavior without it."
         )
 
-    from cartpole_term.protective.env_cfg import PEAK_CONTACT_FORCE_WEIGHT, go1_protective_fall_env_cfg
+    from cartpole_term.protective.env_cfg import PEAK_CONTACT_FORCE_WEIGHT, protective_fall_env_cfg
 
-    peak_force_weight = PEAK_CONTACT_FORCE_WEIGHT if args.peak_force_weight is None else args.peak_force_weight
+    TASK_ID = TASK_IDS[args.robot]
+    # Calibrated weights for a robot other than the Go1 (robot_calibrate_protective.py).
+    weight_overrides = json.loads(Path(args.weights_json).read_text())["weights"] if args.weights_json else {}
+    peak_force_weight = args.peak_force_weight
+    if peak_force_weight is None:
+        peak_force_weight = weight_overrides.get("peak_contact_force_growth", PEAK_CONTACT_FORCE_WEIGHT)
+    print(f"[protective-train] robot={args.robot} weight overrides: {weight_overrides or 'none (Go1 weights)'}")
 
     def env_cfg_factory(play: bool = False):
         # One factory for the training env AND the frozen-eval env, so the
         # eval measures the policy on the same bank and reward it trains on.
-        return go1_protective_fall_env_cfg(
-            play=play, state_bank_file=args.state_bank_file, peak_force_weight=peak_force_weight
+        return protective_fall_env_cfg(
+            args.robot, play=play, state_bank_file=args.state_bank_file,
+            peak_force_weight=peak_force_weight, weight_overrides=weight_overrides,
         )
 
     env_cfg = env_cfg_factory(play=False)
@@ -100,9 +108,8 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
     resolved = vars(args).copy()
     resolved["seed"] = seed
     resolved["peak_force_weight"] = peak_force_weight  # the value actually used (CLI None -> env_cfg default)
-    (log_dir / "resolved_args.json").write_text(
-        __import__("json").dumps(resolved, indent=2, default=str)
-    )
+    resolved["weight_overrides"] = weight_overrides
+    (log_dir / "resolved_args.json").write_text(json.dumps(resolved, indent=2, default=str))
 
     raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
     env = RslRlVecEnvWrapper(raw_env, clip_actions=rl_cfg.clip_actions)
@@ -142,9 +149,12 @@ def main() -> None:
         raise RuntimeError("CUDA GPU required (CLAUDE.md S0.2 / S5.4).")
 
     parser = argparse.ArgumentParser(description="Train Mjlab-Go1-Protective-Fall (Gate 5, see DEVIATIONS.md).")
+    parser.add_argument("--robot", choices=("go1", "g1"), default="go1")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])
     parser.add_argument("--state-bank-file", dest="state_bank_file", type=str, default="outputs/go1_fall_state_bank_seed0.npz")
+    parser.add_argument("--weights-json", dest="weights_json", type=str, default=None,
+                        help="reward weights from scripts/robot_calibrate_protective.py (its 'weights' entry)")
     parser.add_argument(
         "--peak-force-weight", dest="peak_force_weight", type=float, default=None,
         help="weight of the round-8 peak-impact reward term (default: env_cfg.PEAK_CONTACT_FORCE_WEIGHT). "

@@ -40,3 +40,14 @@ def go1_protective_ppo_runner_cfg():
     cfg.experiment_name = "go1_protective_fall"
     cfg.max_iterations = PROTECTIVE_MAX_ITERATIONS
     return cfg
+
+
+def g1_protective_ppo_runner_cfg():
+    """Same overrides on the G1's own shipped PPO cfg (identical network and
+    PPO settings to the Go1's, per mjlab 1.6.0's g1/rl_cfg.py)."""
+    from cartpole_term.g1.rl_cfg import g1_velocity_term_ppo_runner_cfg
+
+    cfg = g1_velocity_term_ppo_runner_cfg()
+    cfg.experiment_name = "g1_protective_fall"
+    cfg.max_iterations = PROTECTIVE_MAX_ITERATIONS
+    return cfg

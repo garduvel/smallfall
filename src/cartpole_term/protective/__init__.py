@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from mjlab.tasks.registry import register_mjlab_task
 
-from cartpole_term.protective.env_cfg import TASK_ID, go1_protective_fall_env_cfg
-from cartpole_term.protective.rl_cfg import go1_protective_ppo_runner_cfg
+from cartpole_term.protective.env_cfg import TASK_ID, TASK_IDS, go1_protective_fall_env_cfg, protective_fall_env_cfg
+from cartpole_term.protective.rl_cfg import g1_protective_ppo_runner_cfg, go1_protective_ppo_runner_cfg
 from cartpole_term.protective.runner import ProtectiveFrozenEvalRunner
 
 _env_cfg = go1_protective_fall_env_cfg(play=False)
@@ -32,5 +32,17 @@ register_mjlab_task(
     env_cfg=_env_cfg,
     play_env_cfg=_env_cfg,
     rl_cfg=go1_protective_ppo_runner_cfg(),
+    runner_cls=ProtectiveFrozenEvalRunner,
+)
+
+# G1 humanoid port (DEVIATIONS.md, 2026-11-13). Scripts always pass their own
+# env_cfg_factory (with the run's bank and calibrated weights); this
+# registration only provides the rl_cfg and runner class.
+_g1_env_cfg = protective_fall_env_cfg("g1", play=False)
+register_mjlab_task(
+    task_id=TASK_IDS["g1"],
+    env_cfg=_g1_env_cfg,
+    play_env_cfg=_g1_env_cfg,
+    rl_cfg=g1_protective_ppo_runner_cfg(),
     runner_cls=ProtectiveFrozenEvalRunner,
 )

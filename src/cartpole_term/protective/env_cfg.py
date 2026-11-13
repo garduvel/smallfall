@@ -83,12 +83,20 @@ from __future__ import annotations
 
 TASK_ID = "Mjlab-Go1-Protective-Fall"
 DEFAULT_STATE_BANK_FILE = "outputs/go1_fall_state_bank_seed0.npz"
+# Per-robot task ids. The Go1's is unchanged; the G1's was added for the
+# humanoid port (DEVIATIONS.md, 2026-11-13).
+TASK_IDS = {"go1": TASK_ID, "g1": "Mjlab-G1-Protective-Fall"}
+DEFAULT_STATE_BANK_FILES = {"go1": DEFAULT_STATE_BANK_FILE, "g1": "outputs/g1_flag_state_bank_seed5.npz"}
 # Safety-cap BUDGET, not the expected episode length -- see module
 # docstring. 3.0s = 150 steps @ Go1's confirmed 50Hz gives ample headroom
 # past step 28, where our own post_fall_obs data showed angular speed
 # still elevated under the old 10-step cutoff. Most episodes should end
 # well before this via the `settled` termination below.
 PROTECTIVE_EPISODE_LENGTH_S = 3.0
+# G1: the Go1's 3 s scaled by sqrt(start height) (0.76 m pelvis vs 0.278 m
+# trunk, mjlab's init_state), since fall time grows with sqrt(height):
+# 3.0 x 1.65 = 4.96 -> 5.0 s. Still a safety cap; `settled` ends episodes.
+PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT = {"go1": PROTECTIVE_EPISODE_LENGTH_S, "g1": 5.0}
 
 # --- Settling (see terminations.py's module docstring for the FRASA
 # (arXiv:2410.08655) sustained-duration design this reuses). The hold
@@ -162,17 +170,30 @@ ACTION_RATE_WEIGHT = -0.00667
 # root_linear_velocity. See DEVIATIONS.md.
 JOINT_POS_LIMITS_WEIGHT = -10.0
 
+# The Go1 reward weights by term name. The G1 starts from these and re-sizes
+# the four Go1-calibrated terms (CALIBRATED_TERMS) by the Go1's own rule, see
+# protective/calibration.py; overrides come in through `weight_overrides`.
+GO1_REWARD_WEIGHTS = {
+    "root_linear_velocity": ROOT_LINEAR_VELOCITY_WEIGHT,
+    "action_rate_l2": ACTION_RATE_WEIGHT,
+    "joint_pos_limits": JOINT_POS_LIMITS_WEIGHT,
+    "joint_torques_l2": JOINT_TORQUES_WEIGHT,
+    "fall_envelope_growth": FALL_ENVELOPE_WEIGHT,
+    "peak_contact_force_growth": PEAK_CONTACT_FORCE_WEIGHT,
+}
 
-def protective_contact_sensor_cfg():
+
+def protective_contact_sensor_cfg(robot: str = "go1"):
     """Per-body robot-vs-terrain contact sensor over every vulnerability
     body. Shared by the protective task and the Gate 6 hand-off env
     (scripts/go1_handoff_eval.py) so both measure force identically."""
     from mjlab.sensor import ContactMatch, ContactSensorCfg
 
-    from cartpole_term.common.robot_profile import GO1
+    from cartpole_term.common.robot_profile import get_profile
 
+    profile = get_profile(robot)
     all_vulnerability_bodies = tuple(
-        name for names in GO1.vulnerability_regions.values() for name in names
+        name for names in profile.vulnerability_regions.values() for name in names
     )
     return ContactSensorCfg(
         name="protective_body_ground_contact",
@@ -191,7 +212,27 @@ def go1_protective_fall_env_cfg(
     state_bank_file: str = DEFAULT_STATE_BANK_FILE,
     peak_force_weight: float = PEAK_CONTACT_FORCE_WEIGHT,
 ):
-    """Go1's protective-fall task cfg. `state_bank_file` is baked into the
+    """The Go1 protective task, unchanged (see protective_fall_env_cfg)."""
+    return protective_fall_env_cfg(
+        "go1", play=play, state_bank_file=state_bank_file, peak_force_weight=peak_force_weight
+    )
+
+
+def protective_fall_env_cfg(
+    robot: str = "go1",
+    play: bool = False,
+    state_bank_file: str | None = None,
+    peak_force_weight: float | None = None,
+    weight_overrides: dict[str, float] | None = None,
+):
+    """Protective-fall task cfg for `robot`, built on its velocity task.
+    For the Go1 with no overrides it is exactly the round-8 task.
+
+    `weight_overrides`: {reward term name: weight}, applied over
+    GO1_REWARD_WEIGHTS (the G1's calibrated weights come in here).
+    `peak_force_weight`, if given, wins over both for that one term.
+
+    Original Go1 notes:  `state_bank_file` is baked into the
     reset event's params at cfg-construction time (see events.py) --
     callers that need a non-default bank build their own env_cfg_factory
     closure over this function rather than relying on package-level
@@ -203,13 +244,24 @@ def go1_protective_fall_env_cfg(
     term, which is exactly the round-7 reward (inference never reads rewards,
     so any checkpoint loads under either setting).
     """
+    from cartpole_term.common.backend import get_robot_backend
+    from cartpole_term.common.robot_profile import get_profile
+
+    profile = get_profile(robot)
+    if state_bank_file is None:
+        state_bank_file = DEFAULT_STATE_BANK_FILES[robot]
+    weights = dict(GO1_REWARD_WEIGHTS)
+    unknown = set(weight_overrides or {}) - set(weights)
+    if unknown:
+        raise ValueError(f"unknown reward terms in weight_overrides: {sorted(unknown)}")
+    weights.update(weight_overrides or {})
+    if peak_force_weight is not None:
+        weights["peak_contact_force_growth"] = peak_force_weight
     from mjlab.managers.event_manager import EventTermCfg
     from mjlab.managers.metrics_manager import MetricsTermCfg
     from mjlab.managers.reward_manager import RewardTermCfg
     from mjlab.managers.scene_entity_config import SceneEntityCfg
     from mjlab.managers.termination_manager import TerminationTermCfg
-    from cartpole_term.common.robot_profile import GO1
-    from cartpole_term.go1.env_cfg import go1_velocity_term_env_cfg
     from cartpole_term.protective.events import inject_fall_state
     from cartpole_term.protective.rewards import (
         logged_action_rate_l2,
@@ -222,9 +274,9 @@ def go1_protective_fall_env_cfg(
     from cartpole_term.protective.space import body_spread, distance_from_fall_start, fall_envelope_growth
     from cartpole_term.protective.terminations import settled
 
-    cfg = go1_velocity_term_env_cfg(play=play)
+    cfg = get_robot_backend(robot).env_cfg_factory(play=play)
 
-    cfg.episode_length_s = PROTECTIVE_EPISODE_LENGTH_S
+    cfg.episode_length_s = PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT[robot]
 
     # No ongoing perturbation needed -- this task starts ALREADY mid-fall
     # (via the reset event below), it doesn't need an additional push.
@@ -263,7 +315,7 @@ def go1_protective_fall_env_cfg(
         },
     )
 
-    protective_contact_cfg = protective_contact_sensor_cfg()
+    protective_contact_cfg = protective_contact_sensor_cfg(robot)
     cfg.scene.sensors = (cfg.scene.sensors or ()) + (protective_contact_cfg,)
 
     # Replace ALL velocity-tracking / gait rewards -- irrelevant here, the
@@ -281,8 +333,8 @@ def go1_protective_fall_env_cfg(
     # one region that maps onto the paper's own "critical body" framing;
     # medium+low (hips/thighs/calves) become the paper's "all other bodies".
     contact_categories = {
-        "critical": GO1.vulnerability_regions["high"],
-        "non_critical": GO1.vulnerability_regions["medium"] + GO1.vulnerability_regions["low"],
+        "critical": profile.vulnerability_regions["high"],
+        "non_critical": profile.vulnerability_regions["medium"] + profile.vulnerability_regions["low"],
     }
     cfg.rewards = {
         "vulnerability_contact_force": RewardTermCfg(
@@ -296,18 +348,18 @@ def go1_protective_fall_env_cfg(
         ),
         "root_linear_velocity": RewardTermCfg(
             func=root_linear_velocity_penalty,
-            weight=ROOT_LINEAR_VELOCITY_WEIGHT,
+            weight=weights["root_linear_velocity"],
             params={},
         ),
-        "action_rate_l2": RewardTermCfg(func=logged_action_rate_l2, weight=ACTION_RATE_WEIGHT, params={}),
-        "joint_pos_limits": RewardTermCfg(func=logged_joint_pos_limits, weight=JOINT_POS_LIMITS_WEIGHT, params={}),
-        "joint_torques_l2": RewardTermCfg(func=logged_joint_torques_l2, weight=JOINT_TORQUES_WEIGHT, params={}),
-        "fall_envelope_growth": RewardTermCfg(func=fall_envelope_growth, weight=FALL_ENVELOPE_WEIGHT, params={}),
+        "action_rate_l2": RewardTermCfg(func=logged_action_rate_l2, weight=weights["action_rate_l2"], params={}),
+        "joint_pos_limits": RewardTermCfg(func=logged_joint_pos_limits, weight=weights["joint_pos_limits"], params={}),
+        "joint_torques_l2": RewardTermCfg(func=logged_joint_torques_l2, weight=weights["joint_torques_l2"], params={}),
+        "fall_envelope_growth": RewardTermCfg(func=fall_envelope_growth, weight=weights["fall_envelope_growth"], params={}),
     }
-    if peak_force_weight != 0.0:
+    if weights["peak_contact_force_growth"] != 0.0:
         cfg.rewards["peak_contact_force_growth"] = RewardTermCfg(
             func=peak_contact_force_growth,
-            weight=peak_force_weight,
+            weight=weights["peak_contact_force_growth"],
             params={"sensor_name": protective_contact_cfg.name},
         )
 
