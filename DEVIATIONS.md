@@ -4783,3 +4783,55 @@ in full in its section 3.3.
     time-out.
   - New `scripts/robot_calibrate_protective.py`.
   - Notebook: `notebooks/g1_smallfall.ipynb`.
+
+## 2026-11-13 -- Fall-size measure ablation (G1): which policy falls smallest overall
+
+- **Why:** "how small a fall is" can be measured many ways, and different
+  measures could rank policies differently. User request: implement several
+  measures and test them against each other ("way 3": combine them by
+  stated rules).
+- **Fixed before any data.**
+- **Ten measures** (`src/cartpole_term/protective/fall_size.py`). All are
+  horizontal, from the fall's start; lower = smaller:
+  - ground covered (the existing primary, `envelope_growth_m`);
+  - max reach;
+  - root travel at the end;
+  - root's largest travel;
+  - root path length;
+  - centroid travel;
+  - swept convex-hull area (32-direction support polygon);
+  - hull growth;
+  - contact reach;
+  - floor area touched (10 cm cells).
+
+  Body positions are body-frame origins, as before. Contact means a net
+  ground force above 1 N on a vulnerability body.
+- **Three combining methods** (`protective/fall_size_ablation.py`):
+  - **A. Dominance:** on per-policy medians.
+  - **B. Mean rank:** per fall and measure; ties averaged.
+  - **C. Geometric-mean ratio to limp:** per fall and measure, with a floor
+    of 1% of the measure's pooled median.
+- **Overall rule:** if B and C name the same policy and it is undominated
+  in A, that policy is the answer. Otherwise the answer is A's undominated
+  set, reported as a disagreement.
+- **Robustness checks:**
+  - 1,000 paired bootstrap resamples of the falls, giving each policy's
+    win share;
+  - Kendall tau between the measures' rankings;
+  - per-fall Spearman between measures;
+  - per-measure paired win shares and Wilcoxon p.
+- **Policies:**
+  - chosen SmallFall checkpoint;
+  - the other SmallFall candidates (iterations 100-300);
+  - walker;
+  - limp.
+- **Bank:** a fresh bank (seed 6). The SmallFall test bank (seed 4) stays
+  used once.
+- **Code:**
+  - `scripts/go1_protective_compare.py` now also records the ten measures
+    (`size__<metric>` in the npz). It asserts that its ground covered
+    equals the existing tracker's.
+  - New `--extra-policy LABEL=CHECKPOINT` (repeatable). The existing
+    verdicts are unchanged.
+  - New `scripts/robot_fall_size_ablation.py` (CPU).
+  - Notebook: `notebooks/g1_fall_size_ablation.ipynb`.

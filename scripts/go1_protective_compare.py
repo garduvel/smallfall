@@ -60,6 +60,7 @@ import torch  # noqa: E402
 import cartpole_term.protective  # noqa: F401,E402 -- registers the task
 from cartpole_term.common.robot_profile import get_profile  # noqa: E402
 from cartpole_term.protective.compare import PASS_METRICS, FirstFallTracker, summarize, verdict  # noqa: E402
+from cartpole_term.protective.fall_size import FallSizeTracker  # noqa: E402
 from cartpole_term.protective.env_cfg import TASK_IDS, protective_fall_env_cfg  # noqa: E402
 from cartpole_term.protective.runner import ProtectiveFrozenEvalRunner  # noqa: E402
 from cartpole_term.runner import build_runner_from_checkpoint  # noqa: E402
@@ -68,6 +69,7 @@ from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
 CONTACT_SENSOR = "protective_body_ground_contact"
 ARMS = ("protective", "walker", "limp")
 LIMP_TORQUE_TOLERANCE_NM = 1e-4
+CONTACT_N = 1.0  # a body counts as touching the ground above this net contact force
 
 
 def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False, robot: str = "go1"):
@@ -122,6 +124,11 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
         [env.scene.env_origins, torch.zeros(num_envs, 4, device=device)], dim=-1
     )
     tracker = FirstFallTracker(robot.data.root_link_pos_w[:, :2], robot.data.body_link_pos_w[..., :2])
+    # Fall-size ablation measures (protective/fall_size.py), stored as size__<metric>.
+    body_names = list(robot.body_names)
+    assert len(body_names) == robot.data.body_link_pos_w.shape[1], "body_names / body_link_pos_w mismatch"
+    contact_idx = torch.tensor([body_names.index(n) for n in sensor.primary_names], device=device)
+    sizer = FallSizeTracker(robot.data.root_link_pos_w[:, :2], robot.data.body_link_pos_w[..., :2])
     snapshot = {k: v.clone() for k, v in actor.state_dict().items()} if actor is not None else None
 
     max_steps = int(env.max_episode_length) + 5
@@ -142,6 +149,10 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
                 terminated=terminated.bool(),
                 truncated=truncated.bool(),
             )
+            body_xy = robot.data.body_link_pos_w[..., :2]
+            sizer.update(root_xy=robot.data.root_link_pos_w[:, :2], body_xy=body_xy,
+                         contact_xy=body_xy[:, contact_idx], in_contact=torch.norm(sensor.data.force, dim=-1) > CONTACT_N,
+                         ended=(terminated | truncated).bool())
             if tracker.all_done:
                 break
             done_ids = (terminated | truncated).nonzero(as_tuple=False).squeeze(-1)
@@ -156,6 +167,11 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
         for k, v in actor.state_dict().items():
             assert torch.equal(snapshot[k], v), f"[compare] {arm}: actor.{k} changed during rollout"
     per_fall = tracker.per_fall()
+    assert sizer.all_done, "fall-size tracker still recording after every first fall ended"
+    sizes = sizer.per_fall()
+    assert np.allclose(sizes["envelope_growth_m"], per_fall["envelope_growth_m"], atol=1e-5), \
+        "the two trackers disagree on ground covered"
+    per_fall.update({f"size__{k}": v for k, v in sizes.items()})
     if arm == "limp":
         worst = float(per_fall["peak_torque_nm"].max())
         if worst > LIMP_TORQUE_TOLERANCE_NM:
@@ -173,12 +189,21 @@ def main() -> None:
     p.add_argument("--num-states", type=int, default=None, help="default: every state in the bank, once each")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--output", default=None)
+    p.add_argument("--extra-policy", action="append", default=[], metavar="LABEL=CHECKPOINT",
+                   help="also replay this checkpoint on the same falls (per-fall arrays only; "
+                        "the verdicts stay protective vs walker/limp). Repeatable.")
     args = p.parse_args()
+    extras = {}
+    for item in args.extra_policy:
+        label, _, ckpt = item.partition("=")
+        if not label or not ckpt or label in ARMS or label in extras or "__" in label:
+            raise ValueError(f"[compare] bad --extra-policy {item!r} (want LABEL=CHECKPOINT, unique label)")
+        extras[label] = ckpt
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required.")
     device = "cuda"
-    for f in (args.protective_checkpoint, args.walker_checkpoint, args.state_bank_file):
+    for f in (args.protective_checkpoint, args.walker_checkpoint, args.state_bank_file, *extras.values()):
         if not Path(f).exists():
             raise FileNotFoundError(f"[compare] missing input: {f}")
 
@@ -186,22 +211,23 @@ def main() -> None:
     num_envs = min(args.num_states or bank_size, bank_size)
     out_path = Path(args.output or f"outputs/{args.robot}_protective_compare_seed{args.seed}.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[compare] {num_envs} fall states x {len(ARMS)} arms")
+    arms = ARMS + tuple(extras)
+    print(f"[compare] {num_envs} fall states x {len(arms)} arms")
 
     actors = {
         "protective": _load_actor(args.protective_checkpoint, args, device),
         "walker": _load_actor(args.walker_checkpoint, args, device),
         "limp": None,
-    }
+    } | {label: _load_actor(ckpt, args, device) for label, ckpt in extras.items()}
 
     per_fall, start_poses, summaries = {}, {}, {}
-    for arm in ARMS:
+    for arm in arms:
         t0 = time.time()
         per_fall[arm], start_poses[arm] = run_arm(arm, actors[arm], args, num_envs, device)
         summaries[arm] = summarize(per_fall[arm])
         print(f"[compare] {arm}: done in {time.time() - t0:.1f}s")
 
-    for arm in ARMS[1:]:
+    for arm in arms[1:]:
         if not torch.allclose(start_poses[arm], start_poses[ARMS[0]], atol=1e-5):
             raise RuntimeError(f"[compare] arm {arm} did not start from the same fall states as {ARMS[0]}")
 
@@ -215,7 +241,7 @@ def main() -> None:
         for m in PASS_METRICS
     }
     report = {
-        "config": vars(args) | {"num_states": num_envs, "arms": list(ARMS)},
+        "config": vars(args) | {"num_states": num_envs, "arms": list(arms), "extra_policies": extras},
         "summaries": summaries,
         "verdict": v,
         "vs_limp": vs_limp,
