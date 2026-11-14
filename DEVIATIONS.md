@@ -5002,3 +5002,15 @@ Run `rewardablation1`. Results are unpacked under
   - new scripts `robot_select_safe_small.py`, `robot_round2_choose.py` and
     `robot_round2_summary.py`;
   - notebook `notebooks/g1_round2.ipynb`.
+
+## 2026-11-14 -- Video envs: larger contact pool (fix)
+
+The round-2 video (g1_r2_hullgrow_s2_watch) printed hundreds of
+"broadphase overflow - please increase nconmax to 49..54". The G1 flat config
+leaves `cfg.sim.nconmax = None` (mjlab `unitree_g1_flat_env_cfg`), so MuJoCo
+Warp sizes the contact pool heuristically per world; with one world (the
+video) that is about 48 contacts, and a fallen G1 has up to 54, so contacts
+were dropped in the video only. Training and the compare replays run
+thousands of worlds that share one pool, so they are not affected. Both watch
+scripts now set `cfg.sim.nconmax = 128` on their single-env config. Physics
+of the policy and every reported number are unchanged; only the videos.

@@ -75,8 +75,15 @@ from record_video import _sanity_check_renderer  # noqa: E402
 MAX_TOTAL_STEPS_PER_EPISODE_BUDGET_MULTIPLIER = 2  # safety cap, see module docstring's precedent
 
 
+# One world gets mjlab's heuristic contact pool (about 48), which a fallen G1
+# overflows ("broadphase overflow ... nconmax to 54"), dropping contacts in the
+# video. Batched training/compare share the pool across thousands of worlds.
+WATCH_NCONMAX = 128
+
+
 def _build_watch_env_cfg(args: argparse.Namespace, backend, profile) -> object:
     cfg = backend.env_cfg_factory(play=False)  # play=True not implemented for either robot yet
+    cfg.sim.nconmax = WATCH_NCONMAX
     cfg.scene.num_envs = 1
     if args.impulse_force is not None:
         from cartpole_term.common.push import add_impulse_push

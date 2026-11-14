@@ -102,9 +102,16 @@ MAX_TOTAL_STEPS_PER_EPISODE_BUDGET = MAX_STEPS_PER_EPISODE
 SPACE_METRICS = ("fall_envelope_radius", "root_travel_at_end", "body_spread_at_end", "body_spread_mean")
 
 
+# One world gets mjlab's heuristic contact pool (about 48), which a fallen G1
+# overflows ("broadphase overflow ... nconmax to 54"), dropping contacts in the
+# video. Batched training/compare share the pool across thousands of worlds.
+WATCH_NCONMAX = 128
+
+
 def _build_watch_env_cfg(args: argparse.Namespace):
     cfg = protective_fall_env_cfg(args.robot, play=False, state_bank_file=args.state_bank_file)
     cfg.scene.num_envs = 1
+    cfg.sim.nconmax = WATCH_NCONMAX
     cfg.viewer.azimuth = args.camera_azimuth
     cfg.viewer.elevation = args.camera_elevation
     if args.camera_distance is not None:
