@@ -193,3 +193,57 @@ def exceedance_curve(values: np.ndarray, radii: np.ndarray) -> list[float]:
     the share of falls that would hit an object at that distance)."""
     v = np.asarray(values, dtype=float)
     return [float((v > r).mean()) for r in radii]
+
+
+# --- Reward ablation: one policy trained per measure ------------------------------
+
+# Short policy labels: the policy trained with measure m is "r_<tag>".
+REWARD_TAGS = {
+    "envelope_growth_m": "ground", "max_reach_m": "reach", "root_travel_end_m": "rootend",
+    "root_travel_max_m": "rootmax", "root_path_m": "rootpath", "centroid_travel_end_m": "centroid",
+    "swept_hull_area_m2": "hull", "hull_growth_m2": "hullgrow", "contact_reach_m": "contact",
+    "touched_area_m2": "touched",
+}
+TAG_TO_MEASURE = {v: k for k, v in REWARD_TAGS.items()}
+MIN_SETTLED_RATE = 0.99  # as in compare.select_checkpoint
+
+
+def select_by_measure(per_arm: dict[str, dict[str, np.ndarray]], candidates: list[str], measure: str,
+                      min_settled: float = MIN_SETTLED_RATE) -> dict:
+    """Pick the checkpoint for a policy trained with `measure`, judged by
+    that same measure on a selection bank: among candidates that come to
+    rest in >= min_settled of falls, the lowest median of the measure (ties
+    -> first candidate). If none comes to rest that often, the lowest median
+    overall, flagged eligible=False. per_arm[label] holds 'settled' and
+    'size__<measure>' arrays."""
+    rows = []
+    for c in candidates:
+        rows.append({"label": c, "settled": float(np.mean(per_arm[c]["settled"])),
+                     "median": float(np.median(per_arm[c][f"size__{measure}"]))})
+    for r in rows:
+        r["eligible"] = r["settled"] >= min_settled
+    pool = [r for r in rows if r["eligible"]] or rows
+    best = min(pool, key=lambda r: r["median"])
+    return {"measure": measure, "selected": best["label"], "selected_is_eligible": best["eligible"], "candidates": rows}
+
+
+def trained_on_report(rep: dict) -> dict | None:
+    """For policies labelled r_<tag>: the ratio-to-reference medians matrix
+    (rows = reward trained on, columns = measure) and whether each policy
+    is the smallest on its own measure. None if there are no r_ policies."""
+    own = {p: TAG_TO_MEASURE[p[2:]] for p in rep["policies"] if p.startswith("r_") and p[2:] in TAG_TO_MEASURE}
+    if not own:
+        return None
+    ref = rep["reference"]
+    med = rep["medians"]
+    ratio = {p: {m: (med[p][m] / med[ref][m] if med[ref][m] else float("nan")) for m in rep["metrics"]} for p in own}
+    trained = list(own)
+    own_rank = {}
+    for p, m in own.items():
+        among = sorted(trained, key=lambda q: med[q][m])
+        own_rank[p] = {"measure": m, "rank_among_trained": among.index(p) + 1, "of": len(among),
+                       "rank_among_all": rep["rank_by_metric"][m].index(p) + 1,
+                       "smallest_trained_on_it": among[0]}
+    return {"ratio_to_reference": ratio, "own_measure": own_rank,
+            "wins_own_measure": sum(r["rank_among_trained"] == 1 for r in own_rank.values()),
+            "num_trained": len(own)}

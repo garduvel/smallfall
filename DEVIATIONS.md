@@ -4835,3 +4835,56 @@ in full in its section 3.3.
     verdicts are unchanged.
   - New `scripts/robot_fall_size_ablation.py` (CPU).
   - Notebook: `notebooks/g1_fall_size_ablation.ipynb`.
+
+## 2026-11-13 -- Reward ablation (G1): one SmallFall policy per fall-size measure
+
+- **Why (user):** each way of measuring fall size should be its own reward,
+  training its own policy; then compare the policies.
+- **Fixed before any data.**
+- **Reward:** the G1 SmallFall reward, with the fall-size term swapped for
+  one of the ten measures from the entry above
+  (`protective/fall_size_reward.py`). Each step pays the measure's increase,
+  so an episode's raw total equals the measure for that fall. For "at the
+  end" measures the increase can be negative.
+  - Ground covered keeps the original `fall_envelope_growth` term
+    unchanged.
+  - Everything else is unchanged: the calibrated weights, training bank 5,
+    selection bank 3, 301 iterations, seed 0.
+- **Weights** (`calibration.fall_size_weights`):
+  - one 11-iteration run of SmallFall's own reward logs all ten measures as
+    episode totals (`--log-fall-sizes`, no reward effect);
+  - weight_m = ground-covered weight × (ground-covered total / measure-m
+    total), averaged over iterations 0-10;
+  - factor clamped to 0.02-50;
+  - ground covered gets SmallFall's weight exactly.
+- **Checkpoint:** each policy picks among iterations 200/250/300 on the
+  selection bank by its own measure: lowest median among those that come to
+  rest in at least 99% of falls (`select_by_measure`). If none does, the
+  lowest overall, flagged.
+- **Scoring:** a fresh bank (seed 6), used for scoring once. Policies:
+  - the ten policies;
+  - the original SmallFall;
+  - walker;
+  - limp.
+
+  Analysis:
+  - the ten-measure ablation with the three combining methods;
+  - a trained-on × measured matrix (median relative to limp);
+  - how many policies are smallest on their own measure.
+- **Known pairs:**
+  - max reach = ground covered + starting size;
+  - hull area = hull growth + starting hull.
+
+  Within each pair the reward differs only by a per-episode constant the
+  policy can't change, but the weights differ. So the pair shows the effect
+  of weight scale alone. `r_ground` is a second run of SmallFall's own
+  reward, which shows run-to-run variation.
+- **Code:**
+  - `fall_size_reward.py`;
+  - `protective_fall_env_cfg(fall_size_measure=, fall_size_weight=,
+    log_fall_sizes=)`;
+  - `go1_train_protective.py` flags `--fall-size-measure`,
+    `--fall-size-weights-json`, `--log-fall-sizes` and `--run-tag`;
+  - new scripts `robot_calibrate_fall_size.py` and
+    `robot_select_by_measure.py`;
+  - notebook `notebooks/g1_reward_ablation.ipynb`.

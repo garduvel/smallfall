@@ -53,3 +53,32 @@ def calibrate(measured: dict[str, float], base_weights: dict[str, float],
         weights[term] = row["weight"]
         rows[term] = row
     return {"weights": weights, "terms": rows, "reference": dict(reference), "limits": list(limits)}
+
+
+# --- Reward ablation: one weight per fall-size measure (DEVIATIONS.md 2026-11-13)
+
+def fall_size_weights(episode_sums: dict[str, float], envelope_weight: float,
+                      limits: tuple[float, float] = FACTOR_LIMITS) -> dict:
+    """Weight for each fall-size measure so that, on the same episodes, its
+    reward weighs as much as the ground-covered term does: weight_m =
+    envelope_weight x sum(envelope_growth) / sum(m), with sums the mean
+    episode totals of the raw measures over the calibration iterations. The
+    ground-covered measure gets envelope_weight exactly. A non-positive or
+    missing sum keeps envelope_weight (flagged); the factor is clamped to
+    `limits`."""
+    lo, hi = limits
+    ref = episode_sums.get("envelope_growth_m")
+    if ref is None or ref <= 0:
+        raise ValueError(f"ground covered episode sum must be positive, got {ref}")
+    weights, rows = {}, {}
+    for m, got in episode_sums.items():
+        row = {"episode_sum": got}
+        if got is None or got <= 0:
+            row.update(factor=1.0, clamped=False, kept_base=True)
+        else:
+            raw = ref / got
+            f = min(max(raw, lo), hi)
+            row.update(factor=f, raw_factor=raw, clamped=f != raw, kept_base=False)
+        row["weight"] = envelope_weight * row["factor"]
+        weights[m], rows[m] = row["weight"], row
+    return {"weights": weights, "terms": rows, "envelope_weight": envelope_weight, "limits": list(limits)}

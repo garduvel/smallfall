@@ -78,6 +78,7 @@ def main() -> None:
     rep["reach_curves"] = {"radii_m": radii.tolist(),
                            **{f"{pol}|{m}": abl.exceedance_curve(per_fall[pol][m], radii)
                               for pol in rep["policies"] for m in ("max_reach_m", "contact_reach_m")}}
+    rep["trained_on"] = abl.trained_on_report(rep)
     rep["config"] = vars(args) | {"start_height_m": h, "scale_note": "medians are divided by start height "
                                   "(areas by its square); rankings do not depend on it"}
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +106,21 @@ def main() -> None:
           + ", ".join(f"{k} {v:.0%}" for k, v in b["B_win_share"].items() if v > 0)
           + "; C picks " + ", ".join(f"{k} {v:.0%}" for k, v in b["C_win_share"].items() if v > 0)
           + f"; all three agree {b['methods_agree_share']:.0%}")
+    t = rep["trained_on"]
+    if t:
+        cols = list(SIZE_METRICS)
+        print(f"\n[size] REWARD ABLATION: median size relative to {args.reference} "
+              f"(rows = the measure the policy was trained on; * = its own measure)")
+        print(f"{'trained on':14s}" + "".join(f"{SHORT[m][:10]:>11s}" for m in cols))
+        for pol, row in t["ratio_to_reference"].items():
+            own = t["own_measure"][pol]["measure"]
+            print(f"{pol:14s}" + "".join(f"{row[m]:10.2f}{'*' if m == own else ' '}" for m in cols))
+        print(f"\n[size] policies smallest (among the trained ones) on the measure they were trained on: "
+              f"{t['wins_own_measure']} of {t['num_trained']}")
+        for pol, r in t["own_measure"].items():
+            if r["rank_among_trained"] != 1:
+                print(f"  {pol}: rank {r['rank_among_trained']} of {r['of']} on its own measure "
+                      f"(smallest there: {r['smallest_trained_on_it']})")
     print(f"[size] wrote {args.output}")
 
 

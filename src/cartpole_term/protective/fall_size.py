@@ -93,6 +93,29 @@ class FallSizeTracker:
         self.touched = torch.zeros(n, self.cells_per_side ** 2, dtype=torch.bool, device=dev)
         self.active = torch.ones(n, dtype=torch.bool, device=dev)
 
+    def begin(self, mask: torch.Tensor, root_xy: torch.Tensor, body_xy: torch.Tensor) -> None:
+        """Start a fresh fall for the envs in `mask` (origin = their current
+        position) and make them active. Out of place throughout: the buffers
+        can be inference tensors (see space.py's module docstring)."""
+        m = mask
+        m1 = m.unsqueeze(-1)
+        origin = torch.where(m1, root_xy, self.origin_xy)
+        rel = body_xy - origin.unsqueeze(1)
+        extent = rel.norm(dim=-1).amax(-1)
+        support = (rel @ self.u.T).amax(dim=1)
+        self.origin_xy = origin
+        self.initial_extent = torch.where(m, extent, self.initial_extent)
+        self.reach = torch.where(m, extent, self.reach)
+        self.support = torch.where(m1, support, self.support)
+        self.initial_hull = torch.where(m, support_polygon_area(support, self.u), self.initial_hull)
+        self.centroid0 = torch.where(m1, body_xy.mean(1), self.centroid0)
+        zero = torch.zeros_like(self.root_end)
+        for name in ("root_end", "root_max", "root_path", "centroid_end", "contact_reach"):
+            setattr(self, name, torch.where(m, zero, getattr(self, name)))
+        self.prev_root = torch.where(m1, root_xy, self.prev_root)
+        self.touched = self.touched & ~m1
+        self.active = self.active | m
+
     def update(self, *, root_xy: torch.Tensor, body_xy: torch.Tensor, contact_xy: torch.Tensor,
                in_contact: torch.Tensor, ended: torch.Tensor) -> None:
         """root_xy [N,2]; body_xy [N,K,2] every body; contact_xy [N,C,2] the
@@ -124,17 +147,21 @@ class FallSizeTracker:
         self.active = a & ~ended
 
     def _scatter_or(self, flat: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """OR of `mask` into cells `flat` (scatter alone keeps an arbitrary
-        writer when several bodies share a cell, possibly a False)."""
-        counts = torch.zeros(self.touched.shape, dtype=torch.int32, device=flat.device)
-        counts.scatter_add_(1, flat, mask.int())
-        return counts > 0
+        """Cells `flat` [N, C] where `mask` is True, as an [N, cells] bool
+        grid. Writing the same True twice is harmless, so duplicates are fine."""
+        rows = torch.arange(flat.shape[0], device=flat.device).unsqueeze(-1).expand_as(flat)
+        grid = torch.zeros(self.touched.shape, dtype=torch.bool, device=flat.device)
+        return grid.index_put((rows[mask], flat[mask]), torch.ones((), dtype=torch.bool, device=flat.device))
 
     @property
     def all_done(self) -> bool:
         return not bool(self.active.any())
 
     def per_fall(self) -> dict[str, np.ndarray]:
+        return {k: v.detach().cpu().numpy() for k, v in self.totals().items()}
+
+    def totals(self) -> dict[str, torch.Tensor]:
+        """Each measure so far, per env (tensors, on the env's device)."""
         hull = support_polygon_area(self.support, self.u)
         out = {
             "envelope_growth_m": self.reach - self.initial_extent,
@@ -149,4 +176,4 @@ class FallSizeTracker:
             "touched_area_m2": self.touched.sum(-1).float() * GRID_CELL_M ** 2,
         }
         assert tuple(out) == SIZE_METRICS
-        return {k: v.detach().cpu().numpy() for k, v in out.items()}
+        return out

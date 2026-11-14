@@ -17,6 +17,7 @@ Upload `cartpole_term_code.zip` (rebuild with `python3 tools/build_code_zip.py`)
 | `g1_predictor.ipynb` | Stages 2-3 of the G1 port: push check (390 N, mass-scaled from the Go1's 150 N), a video under the push, the push dataset and fall predictor, and its bootstrap statistics. Reads the walker from Drive. Built by `tools/notebook_builders/build_g1_predictor_nb.py`. |
 | `g1_smallfall.ipynb` | Stages 4-8 of the G1 port: flag-moment banks (with the live predictor check), reward calibration against the Go1, SmallFall training, checkpoint selection, the one-time test against walker and limp, and a video. Reads walker and predictor from Drive. Built by `tools/notebook_builders/build_g1_smallfall_nb.py`. |
 | `g1_fall_size_ablation.ipynb` | Ten ways of measuring how small a fall is, applied to seven G1 policies (SmallFall checkpoints, walker, limp) on a fresh bank, and three rules for which falls smallest overall. Reads walker, predictor and SmallFall from Drive. Built by `tools/notebook_builders/build_g1_fall_size_nb.py`. |
+| `g1_reward_ablation.ipynb` | Reward ablation: ten SmallFall policies, each trained with a different fall-size measure as its reward, scored on all ten measures on a fresh bank. Reads walker, predictor and SmallFall inputs from Drive. Built by `tools/notebook_builders/build_g1_reward_ablation_nb.py`. |
 
 ## `archive/`: the runs that produced the recorded Go1 results
 

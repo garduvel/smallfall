@@ -196,3 +196,139 @@ def test_script_reads_a_compare_npz(tmp_path):
     assert sorted(pf) == ["limp", "protective", "walker"]
     with pytest.raises(ValueError):
         s.load_per_fall(str(tmp_path / "c.npz"), ["limp", "nope"])
+
+
+# --- reward term (fall_size_reward.py) -------------------------------------------
+
+import sys  # noqa: E402
+import types  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+def _reward_module():
+    with mock.patch.dict(sys.modules, {"cartpole_term.protective.fall_size": fs}):
+        return load_module("protective/fall_size_reward.py", "_fall_size_reward_under_test")
+
+
+class _FakeEnv:
+    """Two envs, three bodies (two watched for contact), random walks."""
+
+    def __init__(self, seed=0):
+        self.num_envs, self.device = 2, "cpu"
+        self.g = torch.Generator().manual_seed(seed)
+        self.root = torch.zeros(2, 3)
+        self.robot = types.SimpleNamespace(body_names=("pelvis", "torso", "foot"), data=types.SimpleNamespace())
+        self.sensor = types.SimpleNamespace(primary_names=("pelvis", "torso"), data=types.SimpleNamespace())
+        self.scene = {"robot": self.robot, "contact": self.sensor}
+        self.step()
+
+    def step(self):
+        self.root = self.root + 0.1 * torch.randn(2, 3, generator=self.g)
+        body = self.root.unsqueeze(1) + 0.3 * torch.randn(2, 3, 3, generator=self.g)
+        self.robot.data.root_link_pos_w = self.root.clone()
+        self.robot.data.body_link_pos_w = body
+        self.sensor.data.force = 5.0 * torch.randn(2, 2, 3, generator=self.g)
+
+
+@pytest.mark.parametrize("measure", fs.SIZE_METRICS)
+def test_reward_increments_sum_to_the_measure(measure):
+    rw = _reward_module()
+    env = _FakeEnv()
+    term = rw.fall_size_increment(types.SimpleNamespace(params={"measure": measure}), env)
+    # Mirror of what the term sees, recorded with the replay tracker.
+    r = env.robot.data
+    ref = None
+    total = torch.zeros(2)
+    for step in range(8):
+        if step:
+            env.step()
+        out = term(env, measure=measure, sensor_name="contact")
+        if ref is None:
+            ref = fs.FallSizeTracker(r.root_link_pos_w[:, :2], r.body_link_pos_w[..., :2])
+        body_xy = r.body_link_pos_w[..., :2]
+        ref.update(root_xy=r.root_link_pos_w[:, :2], body_xy=body_xy, contact_xy=body_xy[:, :2],
+                   in_contact=env.sensor.data.force.norm(dim=-1) > rw.CONTACT_N, ended=torch.zeros(2, dtype=torch.bool))
+        total = total + out
+    assert total.numpy() == pytest.approx(ref.per_fall()[measure], abs=1e-5)
+
+
+def test_reward_restarts_after_reset():
+    rw = _reward_module()
+    env = _FakeEnv(seed=3)
+    m = "root_path_m"
+    term = rw.fall_size_increment(types.SimpleNamespace(params={"measure": m}), env)
+    for _ in range(5):
+        term(env, measure=m, sensor_name="contact")
+        env.step()
+    term.reset(env_ids=torch.tensor([1]))
+    out = term(env, measure=m, sensor_name="contact")
+    assert float(out[1]) == 0.0  # env 1: first step of a fresh fall, no path yet
+    assert float(out[0]) > 0.0   # env 0 carries on
+
+
+def test_reward_rejects_unknown_measure():
+    rw = _reward_module()
+    with pytest.raises(ValueError):
+        rw.fall_size_increment(types.SimpleNamespace(params={"measure": "vibes"}), _FakeEnv())
+
+
+# --- weight sizing (calibration.fall_size_weights) -------------------------------
+
+cal = load_module("protective/calibration.py", "_calibration_for_size_test")
+
+
+def test_fall_size_weights():
+    sums = {"envelope_growth_m": 0.5, "root_path_m": 1.0, "touched_area_m2": 0.5 / 1000, "contact_reach_m": 0.0}
+    out = cal.fall_size_weights(sums, -40.0)
+    assert out["weights"]["envelope_growth_m"] == -40.0
+    assert out["weights"]["root_path_m"] == pytest.approx(-20.0)
+    assert out["terms"]["touched_area_m2"]["clamped"] and out["weights"]["touched_area_m2"] == pytest.approx(-40.0 * 50)
+    assert out["terms"]["contact_reach_m"]["kept_base"] and out["weights"]["contact_reach_m"] == -40.0
+    with pytest.raises(ValueError):
+        cal.fall_size_weights({"root_path_m": 1.0}, -40.0)
+
+
+def test_size_calibration_script_names_match():
+    path = Path(__file__).resolve().parent.parent / "scripts" / "robot_calibrate_fall_size.py"
+    spec = importlib.util.spec_from_file_location("_size_cal_script", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.SIZE_METRICS == fs.SIZE_METRICS
+
+
+def test_reward_tags_cover_every_measure():
+    assert set(abl.REWARD_TAGS) == set(fs.SIZE_METRICS)
+    assert len(set(abl.REWARD_TAGS.values())) == len(fs.SIZE_METRICS)
+    assert all("_" not in t for t in abl.REWARD_TAGS.values())
+
+
+def test_select_by_measure_uses_its_own_measure_and_settling():
+    per_arm = {
+        "it200": {"settled": np.ones(10), "size__root_path_m": np.full(10, 0.5)},
+        "it250": {"settled": np.r_[np.ones(9), 0], "size__root_path_m": np.full(10, 0.1)},  # 90% settled
+        "it300": {"settled": np.ones(10), "size__root_path_m": np.full(10, 0.3)},
+    }
+    out = abl.select_by_measure(per_arm, ["it200", "it250", "it300"], "root_path_m")
+    assert out["selected"] == "it300" and out["selected_is_eligible"]
+    for v in per_arm.values():
+        v["settled"] = np.zeros(10)
+    out = abl.select_by_measure(per_arm, ["it200", "it250", "it300"], "root_path_m")
+    assert out["selected"] == "it250" and not out["selected_is_eligible"]
+
+
+def test_trained_on_report():
+    pf = _per_fall({"limp": (1, 1, 1), "walker": (2, 2, 2), "r_ground": (0.5, 0.9, 0.9), "r_reach": (0.6, 0.4, 0.8)})
+    pf = {p: {mm: v[m] for m, mm in zip(M, ("envelope_growth_m", "max_reach_m", "root_path_m"))} for p, v in pf.items()}
+    rep = abl.analyse(pf, ("envelope_growth_m", "max_reach_m", "root_path_m"), bootstrap=10)
+    t = abl.trained_on_report(rep)
+    assert t["num_trained"] == 2 and t["wins_own_measure"] == 2
+    assert t["ratio_to_reference"]["r_ground"]["envelope_growth_m"] == pytest.approx(0.5, rel=0.05)
+    assert abl.trained_on_report(abl.analyse(_per_fall({"limp": (1, 1, 1), "w": (2, 2, 2)}), M, bootstrap=0)) is None
+
+
+def test_reward_ablation_notebook_tags_match():
+    import ast
+    src = (Path(__file__).resolve().parent.parent / "tools" / "notebook_builders" / "build_g1_reward_ablation_nb.py").read_text()
+    i = src.index("TAGS = {")
+    j = src.index("}", i)
+    assert ast.literal_eval(src[i + len("TAGS = "):j + 1]) == abl.REWARD_TAGS

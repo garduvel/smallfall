@@ -75,6 +75,16 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
     if peak_force_weight is None:
         peak_force_weight = weight_overrides.get("peak_contact_force_growth", PEAK_CONTACT_FORCE_WEIGHT)
     print(f"[protective-train] robot={args.robot} weight overrides: {weight_overrides or 'none (Go1 weights)'}")
+    # Reward ablation: the fall-size term's weight for this measure
+    # (robot_calibrate_fall_size.py), else the fall_envelope_growth weight.
+    fall_size_weight = None
+    if args.fall_size_weights_json:
+        table = json.loads(Path(args.fall_size_weights_json).read_text())["weights"]
+        if args.fall_size_measure not in table:
+            raise KeyError(f"{args.fall_size_weights_json} has no weight for {args.fall_size_measure}")
+        fall_size_weight = table[args.fall_size_measure]
+    print(f"[protective-train] fall-size reward: {args.fall_size_measure} "
+          f"(weight {fall_size_weight if fall_size_weight is not None else 'the fall_envelope_growth weight'})")
 
     def env_cfg_factory(play: bool = False):
         # One factory for the training env AND the frozen-eval env, so the
@@ -82,6 +92,8 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
         return protective_fall_env_cfg(
             args.robot, play=play, state_bank_file=args.state_bank_file,
             peak_force_weight=peak_force_weight, weight_overrides=weight_overrides,
+            fall_size_measure=args.fall_size_measure, fall_size_weight=fall_size_weight,
+            log_fall_sizes=args.log_fall_sizes,
         )
 
     env_cfg = env_cfg_factory(play=False)
@@ -99,7 +111,8 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
     eval_interval = SMOKE_EVAL_INTERVAL if args.smoke else args.eval_interval
     rl_cfg.save_interval = eval_interval
 
-    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_seed{seed}"
+    tag = f"_{args.run_tag}" if args.run_tag else ""
+    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"{tag}_seed{seed}"
     log_dir = (Path("logs/rsl_rl") / rl_cfg.experiment_name / run_name).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +122,7 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
     resolved["seed"] = seed
     resolved["peak_force_weight"] = peak_force_weight  # the value actually used (CLI None -> env_cfg default)
     resolved["weight_overrides"] = weight_overrides
+    resolved["fall_size_weight"] = fall_size_weight
     (log_dir / "resolved_args.json").write_text(json.dumps(resolved, indent=2, default=str))
 
     raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
@@ -160,6 +174,13 @@ def main() -> None:
         help="weight of the round-8 peak-impact reward term (default: env_cfg.PEAK_CONTACT_FORCE_WEIGHT). "
         "0 reproduces the round-7 reward.",
     )
+    parser.add_argument("--fall-size-measure", dest="fall_size_measure", default="envelope_growth_m",
+                        help="fall-size reward term (protective/fall_size.py SIZE_METRICS); reward ablation")
+    parser.add_argument("--fall-size-weights-json", dest="fall_size_weights_json", default=None,
+                        help="robot_calibrate_fall_size.py output: weight per measure")
+    parser.add_argument("--log-fall-sizes", dest="log_fall_sizes", action="store_true",
+                        help="log every fall-size measure as Episode_Metrics/fallsize_<m> (for sizing weights)")
+    parser.add_argument("--run-tag", dest="run_tag", default="", help="inserted in the run directory name")
     parser.add_argument("--env.scene.num-envs", dest="env_scene_num_envs", type=int, default=4096)
     parser.add_argument("--eval.num-envs", dest="eval_num_envs", type=int, default=256)
     parser.add_argument("--eval.interval", dest="eval_interval", type=int, default=10)
