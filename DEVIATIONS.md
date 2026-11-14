@@ -5016,3 +5016,33 @@ thousands of worlds that share one pool (about 48 x worlds; MuJoCo Warp
 contacts -- which would print the same message in those cells' logs. Both watch
 scripts now set `cfg.sim.nconmax = 128` on their single-env config. Physics
 of the policy and every reported number are unchanged; only the videos.
+
+## 2026-11-14 -- G1 round 2 results (smallest safe fall)
+
+Run as planned above (3 rewards x 3 seeds x 600 iterations; select on bank 3,
+test once on bank 7, 501 falls). Results: `outputs/g1_round2/`, zip in
+`archive/g1_round2_round2.zip`.
+
+- Selection chose reward **hullgrow** (all three runs eligible, mean size
+  score 0.747; mix 0.760, both eligible; ground 0.817, two of three runs not
+  eligible) and policy **hullgrow_s2** (iteration 600).
+- Test, hullgrow_s2 vs the original SmallFall ("protective"):
+  - size score 0.720 vs 0.913 (ratio 0.79); smaller on 92% of falls;
+    Wilcoxon p = 1e-72;
+  - ground covered (median) 0.548 m vs 0.693 m (-21%), p = 2e-61; limp
+    0.922 m, walker 1.535 m;
+  - smaller than SmallFall on all ten size measures (medians);
+  - settled 97.8% (bar 97%; SmallFall 98.4%);
+  - trunk/pelvis force median 0 N (limp 1,238 N); any-body force
+    1,327 N vs SmallFall 1,527 N (-13%) and limp 2,440 N.
+  - **Pre-registered check: PASS** (all five conditions).
+- Spread across seeds on the test bank: hullgrow 0.720-0.790, mix 0.736-0.778,
+  ground 0.798-0.838; settled means 99.2% / 97.4% / 85.0%. Hull growth wins
+  on size and on coming to rest; the ground-covered reward is the least
+  reliable at settling.
+- Note (not part of the rule): hullgrow_s1 is equally small on the test bank
+  (0.722) and settled 100%; it is the practical alternative if the 2.2%
+  non-settling of s2 matters.
+- Caveat: the single-env video overflowed MuJoCo Warp's contact pool (fixed,
+  entry above). Whether the batched T/X cells printed the same warning has not
+  been checked from the logs.
