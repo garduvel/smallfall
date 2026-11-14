@@ -4888,3 +4888,53 @@ in full in its section 3.3.
   - new scripts `robot_calibrate_fall_size.py` and
     `robot_select_by_measure.py`;
   - notebook `notebooks/g1_reward_ablation.ipynb`.
+
+## 2026-11-14 -- Reward ablation (G1): results
+
+Run `rewardablation1`. Results are unpacked under
+`outputs/g1_reward_ablation1/`; the zip is in `archive/`. Scored on bank 6
+(501 falls). A local re-run of the ablation reproduces the Colab report.
+
+- **Pre-registered overall answer: r_centroid.** Mean rank, ratio to limp
+  and dominance agree, in 100% of 1,000 resamples.
+  - **It fails the project's settle rule:** it comes to rest in 57% of
+    falls (r_rootend 54%, r_rootpath 69%).
+  - All three "where it ends up / how far it moves" rewards learned not to
+    settle within the 5 s cap.
+  - Their unsettled falls are not smaller on ground covered than their
+    settled ones, so the effect is not "unfinished falls look small".
+  - The behaviour still needs a video.
+- **Checkpoint choice:** in 9 of 10 policies no candidate reached the 99%
+  settle bar on the selection bank (r_ground: 0.97-0.98), so the
+  flagged fallback was used. The 99% bar is too strict for one 301-iteration
+  run. Every policy's frozen-eval return was still rising at iteration 300.
+- **The measures fall into families that trade off against each other**
+  (mean Kendall tau 0.23):
+  - **Ground covered / max reach / contact reach:** every trained policy
+    gets 0.72-0.81 of limp. The spread is about the run-to-run noise.
+  - **Root / centroid travel:** the root and centroid rewards reach
+    0.62-0.72 of limp. The hull rewards reach about 1.0, no better than limp.
+  - **Hull area:** the hull rewards reach 0.72-0.82 of limp. Every other
+    trained policy is 1.06-1.25, worse than limp.
+  - **Touched area:** only r_touched improves it (0.70). The others are
+    0.93-1.11.
+- **Run-to-run noise (r_ground vs the original SmallFall, same reward):**
+  - ground covered: no difference, p=0.23;
+  - centroid travel: 0.04 heights apart, p=1e-7.
+
+  With one seed per reward, gaps below about 0.05 heights are not evidence
+  of a reward effect.
+- **r_reach vs r_ground on ground covered:** 0.017 heights smaller,
+  p=0.11. Not shown.
+- **Settling 95% or more** (limp, SmallFall, r_ground, r_contact, r_hull,
+  r_hullgrow):
+  - **mean rank:** r_contact, r_ground and r_hullgrow are within 0.1 of
+    each other;
+  - **ratio to limp:** r_hullgrow 0.889, in 100% of resamples;
+  - **dominance:** the methods disagree.
+- **One measure per family** (ground covered, centroid, hull growth,
+  touched): r_hullgrow wins under both methods, with all policies or only
+  those that settle.
+- **Forces:** every trained policy has median trunk force 0 N and any-body
+  force 1,412-1,612 N (limp 2,552; walker 2,315). No reward made impacts
+  harder.
