@@ -83,6 +83,19 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
         if args.fall_size_measure not in table:
             raise KeyError(f"{args.fall_size_weights_json} has no weight for {args.fall_size_measure}")
         fall_size_weight = table[args.fall_size_measure]
+    # Round 2: a mix of measures, each at a fraction of its sized weight.
+    fall_size_mix = None
+    if args.fall_size_mix:
+        if not args.fall_size_weights_json:
+            raise ValueError("--fall-size-mix needs --fall-size-weights-json")
+        table = json.loads(Path(args.fall_size_weights_json).read_text())["weights"]
+        fall_size_mix = {}
+        for item in args.fall_size_mix.split(","):
+            m, _, frac = item.partition("=")
+            if m not in table:
+                raise KeyError(f"{args.fall_size_weights_json} has no weight for {m}")
+            fall_size_mix[m] = float(frac) * table[m]
+        print(f"[protective-train] fall-size reward mix (absolute weights): {fall_size_mix}")
     print(f"[protective-train] fall-size reward: {args.fall_size_measure} "
           f"(weight {fall_size_weight if fall_size_weight is not None else 'the fall_envelope_growth weight'})")
 
@@ -93,7 +106,7 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
             args.robot, play=play, state_bank_file=args.state_bank_file,
             peak_force_weight=peak_force_weight, weight_overrides=weight_overrides,
             fall_size_measure=args.fall_size_measure, fall_size_weight=fall_size_weight,
-            log_fall_sizes=args.log_fall_sizes,
+            log_fall_sizes=args.log_fall_sizes, fall_size_mix=fall_size_mix,
         )
 
     env_cfg = env_cfg_factory(play=False)
@@ -123,6 +136,7 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
     resolved["peak_force_weight"] = peak_force_weight  # the value actually used (CLI None -> env_cfg default)
     resolved["weight_overrides"] = weight_overrides
     resolved["fall_size_weight"] = fall_size_weight
+    resolved["fall_size_mix_weights"] = fall_size_mix
     (log_dir / "resolved_args.json").write_text(json.dumps(resolved, indent=2, default=str))
 
     raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
@@ -178,6 +192,8 @@ def main() -> None:
                         help="fall-size reward term (protective/fall_size.py SIZE_METRICS); reward ablation")
     parser.add_argument("--fall-size-weights-json", dest="fall_size_weights_json", default=None,
                         help="robot_calibrate_fall_size.py output: weight per measure")
+    parser.add_argument("--fall-size-mix", dest="fall_size_mix", default=None,
+                        help="e.g. envelope_growth_m=0.5,hull_growth_m2=0.5: fractions of each sized weight")
     parser.add_argument("--log-fall-sizes", dest="log_fall_sizes", action="store_true",
                         help="log every fall-size measure as Episode_Metrics/fallsize_<m> (for sizing weights)")
     parser.add_argument("--run-tag", dest="run_tag", default="", help="inserted in the run directory name")

@@ -247,3 +247,57 @@ def trained_on_report(rep: dict) -> dict | None:
     return {"ratio_to_reference": ratio, "own_measure": own_rank,
             "wins_own_measure": sum(r["rank_among_trained"] == 1 for r in own_rank.values()),
             "num_trained": len(own)}
+
+
+# --- Round 2 (G1): smallest fall that is still safe --------------------------------
+# DEVIATIONS.md 2026-11-14. "Size score": one measure per family the reward
+# ablation found (they trade off against each other), each relative to limp
+# on the same fall, geometric mean over the four and over falls. 0.8 = 20%
+# smaller than limp, averaged over the four kinds of "small".
+FAMILY_MEASURES = ("envelope_growth_m", "centroid_travel_end_m", "hull_growth_m2", "touched_area_m2")
+SAFE_MIN_SETTLED = 0.97  # the ablation showed 0.99 is out of reach for good policies (r_ground 0.97-0.98)
+
+
+def size_floors(per_arm: dict[str, dict[str, np.ndarray]], measures=FAMILY_MEASURES) -> dict[str, float]:
+    """1% of each measure's pooled median over every arm (as in method C)."""
+    return {m: max(RATIO_FLOOR_FRACTION * float(np.median(np.abs(np.concatenate(
+        [per_arm[a][f"size__{m}"] for a in per_arm])))), 1e-9) for m in measures}
+
+
+def per_fall_size_score(arm: dict[str, np.ndarray], ref: dict[str, np.ndarray], floors: dict[str, float],
+                        measures=FAMILY_MEASURES) -> np.ndarray:
+    """Per fall: geometric mean over `measures` of (arm + floor) / (ref + floor)."""
+    logs = [np.log((arm[f"size__{m}"] + floors[m]) / (ref[f"size__{m}"] + floors[m])) for m in measures]
+    return np.exp(np.mean(logs, axis=0))
+
+
+def safety_row(arm: dict[str, np.ndarray]) -> dict[str, float]:
+    return {"settled": float(np.mean(arm["settled"])),
+            "trunk_force_median": float(np.median(arm["peak_force_critical_n"])),
+            "any_force_median": float(np.median(arm["peak_force_any_n"])),
+            "ground_covered_median": float(np.median(arm["size__envelope_growth_m"]))}
+
+
+def select_safe_small(per_arm: dict[str, dict[str, np.ndarray]], candidates: list[str], reference: str = "limp",
+                      walker: str = "walker", min_settled: float = SAFE_MIN_SETTLED) -> dict:
+    """Round-2 checkpoint rule (fixed before the data):
+      safe     = median trunk/pelvis peak force <= the walker's AND median
+                 any-body peak force < limp's;
+      eligible = safe AND comes to rest in >= min_settled of falls;
+      choose the eligible candidate with the lowest size score (vs limp).
+    Fallbacks, flagged: lowest score among those that settle often enough,
+    then among all."""
+    floors = size_floors(per_arm)
+    w, ref = safety_row(per_arm[walker]), safety_row(per_arm[reference])
+    rows = []
+    for c in candidates:
+        r = {"label": c, **safety_row(per_arm[c])}
+        s = per_fall_size_score(per_arm[c], per_arm[reference], floors)
+        r["size_score"] = float(np.exp(np.mean(np.log(s))))
+        r["safe"] = r["trunk_force_median"] <= w["trunk_force_median"] and r["any_force_median"] < ref["any_force_median"]
+        r["eligible"] = r["safe"] and r["settled"] >= min_settled
+        rows.append(r)
+    pool = ([r for r in rows if r["eligible"]] or [r for r in rows if r["settled"] >= min_settled] or rows)
+    best = min(pool, key=lambda r: (r["size_score"], r["label"]))
+    return {"selected": best["label"], "selected_is_eligible": best["eligible"], "size_score": best["size_score"],
+            "floors": floors, "walker": w, "reference": ref, "candidates": rows}

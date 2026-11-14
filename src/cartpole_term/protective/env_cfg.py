@@ -227,6 +227,7 @@ def protective_fall_env_cfg(
     fall_size_measure: str = "envelope_growth_m",
     fall_size_weight: float | None = None,
     log_fall_sizes: bool = False,
+    fall_size_mix: dict[str, float] | None = None,
 ):
     """Protective-fall task cfg for `robot`, built on its velocity task.
     For the Go1 with no overrides it is exactly the round-8 task.
@@ -238,7 +239,9 @@ def protective_fall_env_cfg(
     (fall_size_reward.py) whose weight is `fall_size_weight` (default: the
     fall_envelope_growth weight). `log_fall_sizes` adds every measure as a
     log-only Episode_Metrics/fallsize_<measure> (episode sum), used to size
-    the weights.
+    the weights. `fall_size_mix` ({measure: weight}, round 2) replaces the
+    ground-covered term with one `fall_size__<measure>` term per entry and
+    cannot be combined with a non-default `fall_size_measure`.
 
     `weight_overrides`: {reward term name: weight}, applied over
     GO1_REWARD_WEIGHTS (the G1's calibrated weights come in here).
@@ -368,17 +371,24 @@ def protective_fall_env_cfg(
         "joint_torques_l2": RewardTermCfg(func=logged_joint_torques_l2, weight=weights["joint_torques_l2"], params={}),
         "fall_envelope_growth": RewardTermCfg(func=fall_envelope_growth, weight=weights["fall_envelope_growth"], params={}),
     }
-    if fall_size_measure != "envelope_growth_m" or log_fall_sizes:
+    if fall_size_mix and fall_size_measure != "envelope_growth_m":
+        raise ValueError("give fall_size_measure or fall_size_mix, not both")
+    if fall_size_measure != "envelope_growth_m" or log_fall_sizes or fall_size_mix:
         from cartpole_term.protective.fall_size import SIZE_METRICS
         from cartpole_term.protective.fall_size_reward import fall_size_increment
 
-        if fall_size_measure not in SIZE_METRICS:
-            raise ValueError(f"unknown fall_size_measure {fall_size_measure!r}; one of {SIZE_METRICS}")
+        for m in [fall_size_measure, *(fall_size_mix or {})]:
+            if m not in SIZE_METRICS:
+                raise ValueError(f"unknown fall-size measure {m!r}; one of {SIZE_METRICS}")
         size_params = lambda m: {"measure": m, "sensor_name": protective_contact_cfg.name}  # noqa: E731
     if fall_size_measure != "envelope_growth_m":
         del cfg.rewards["fall_envelope_growth"]
         w = weights["fall_envelope_growth"] if fall_size_weight is None else fall_size_weight
         cfg.rewards["fall_size"] = RewardTermCfg(func=fall_size_increment, weight=w, params=size_params(fall_size_measure))
+    if fall_size_mix:
+        del cfg.rewards["fall_envelope_growth"]
+        for m, w in fall_size_mix.items():
+            cfg.rewards[f"fall_size__{m}"] = RewardTermCfg(func=fall_size_increment, weight=w, params=size_params(m))
     if weights["peak_contact_force_growth"] != 0.0:
         cfg.rewards["peak_contact_force_growth"] = RewardTermCfg(
             func=peak_contact_force_growth,

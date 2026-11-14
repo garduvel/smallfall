@@ -332,3 +332,71 @@ def test_reward_ablation_notebook_tags_match():
     i = src.index("TAGS = {")
     j = src.index("}", i)
     assert ast.literal_eval(src[i + len("TAGS = "):j + 1]) == abl.REWARD_TAGS
+
+
+# --- round 2: safe-small selection ------------------------------------------------
+
+def _arm(scale, settled=1.0, trunk=0.0, anyf=1000.0, n=30, seed=0):
+    rng = np.random.default_rng(seed)
+    base = rng.uniform(0.5, 1.5, n)
+    a = {f"size__{m}": base * scale for m in fs.SIZE_METRICS}
+    a.update(settled=(np.arange(n) < round(settled * n)).astype(float),
+             peak_force_critical_n=np.full(n, trunk), peak_force_any_n=np.full(n, anyf))
+    return a
+
+
+def test_size_score_is_ratio_to_limp():
+    arms = {"limp": _arm(1.0), "x": _arm(0.5)}
+    s = abl.per_fall_size_score(arms["x"], arms["limp"], abl.size_floors(arms))
+    assert np.allclose(s, 0.5, rtol=0.03)
+
+
+def test_select_safe_small_rules():
+    arms = {"limp": _arm(1.0, trunk=1300, anyf=2500), "walker": _arm(2.0, settled=0.1, trunk=1700, anyf=2300),
+            "small_unsafe": _arm(0.3, anyf=2600),          # any-body force above limp's
+            "small_restless": _arm(0.4, settled=0.9),       # comes to rest too rarely
+            "ok_big": _arm(0.8), "ok_small": _arm(0.6)}
+    out = abl.select_safe_small(arms, ["small_unsafe", "small_restless", "ok_big", "ok_small"])
+    assert out["selected"] == "ok_small" and out["selected_is_eligible"]
+    assert out["size_score"] == pytest.approx(0.6, rel=0.03)
+    rows = {r["label"]: r for r in out["candidates"]}
+    assert not rows["small_unsafe"]["safe"] and rows["small_restless"]["safe"] and not rows["small_restless"]["eligible"]
+    out = abl.select_safe_small(arms, ["small_unsafe", "small_restless"])
+    assert out["selected"] == "small_unsafe" and not out["selected_is_eligible"]  # settles enough, flagged unsafe
+
+
+def _load_script(name):
+    path = Path(__file__).resolve().parent.parent / "scripts" / name
+    spec = importlib.util.spec_from_file_location(f"_{name[:-3]}", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_round2_choose():
+    ch = _load_script("robot_round2_choose.py")
+    c = lambda s, e=True: {"selected": "x", "selected_is_eligible": e, "size_score": s, "checkpoint": f"c{s}"}  # noqa: E731
+    out = ch.choose({"ground_s0": c(0.80), "ground_s1": c(0.84), "mix_s0": c(0.70), "mix_s1": c(0.90),
+                     "hull_s0": c(0.60, False), "hull_s1": c(0.61)})
+    # hull is best on score but one run has no eligible checkpoint -> ranked last;
+    # mix's mean (0.80) beats ground's (0.82)
+    assert out["chosen_reward"] == "mix" and out["chosen_policy"] == "mix_s0"
+    out = ch.choose({"ground_s0": c(0.80), "mix_s0": c(0.75), "mix_s1": c(0.76)})
+    assert out["chosen_reward"] == "mix" and out["chosen_policy"] == "mix_s0"
+    with pytest.raises(ValueError):
+        ch.choose({"nolabel": c(0.5)})
+
+
+def test_round2_summary():
+    sm = _load_script("robot_round2_summary.py")
+    arms = {"limp": _arm(1.0, trunk=1300, anyf=2500), "walker": _arm(2.0, settled=0.1, trunk=1700, anyf=2300),
+            "protective": _arm(0.8), "mix_s0": _arm(0.6), "mix_s1": _arm(0.65), "ground_s0": _arm(0.8)}
+    rng = np.random.default_rng(5)
+    for m in fs.SIZE_METRICS:  # per-fall noise so the paired test has something to test
+        arms["mix_s0"][f"size__{m}"] = arms["mix_s0"][f"size__{m}"] * rng.uniform(0.9, 1.1, 30)
+    out = sm.summarize(arms, "mix_s0")
+    assert out["check"]["pass"]
+    assert out["by_reward"]["mix"]["runs"] == ["mix_s0", "mix_s1"]
+    assert out["check"]["size_score_ratio_to_baseline"] == pytest.approx(0.75, rel=0.05)
+    out = sm.summarize(arms, "ground_s0")
+    assert not out["check"]["passes"]["smaller_than_smallfall"] and not out["check"]["pass"]

@@ -4938,3 +4938,67 @@ Run `rewardablation1`. Results are unpacked under
 - **Forces:** every trained policy has median trunk force 0 N and any-body
   force 1,412-1,612 N (limp 2,552; walker 2,315). No reward made impacts
   harder.
+
+## 2026-11-14 -- G1 round 2: the smallest fall that is still safe (plan, fixed before data)
+
+- **Goal (user):** "a policy that falls the smallest and keeps the robot
+  fairly safe", keeping SmallFall's ideas: separate train / selection /
+  test banks, rules fixed first, the test used once.
+- **Rewards (3):** everything else is the G1 SmallFall reward with the
+  calibrated weights.
+  - **`ground`:** SmallFall's own reward.
+  - **`hullgrow`:** hull growth in place of ground covered. Best among the
+    settling policies in the ablation.
+  - **`mix`:** 0.5 × each of their sized weights
+    (`--fall-size-mix`; weights from `rewardablation1`'s
+    `g1_fall_size_weights.json`).
+- **Training:**
+  - 3 runs each (seeds 0, 1, 2), so reward differences can be told apart
+    from run-to-run noise. The ablation showed 0.04 heights between two runs
+    of one reward.
+  - 601 iterations: returns were still rising at 300.
+  - Training bank 5.
+- **Size score** (`fall_size_ablation.FAMILY_MEASURES`): one measure per
+  family the ablation found:
+  - ground covered;
+  - centroid travel;
+  - hull growth;
+  - floor touched.
+
+  Each is relative to limp on the same fall. Score = geometric mean over
+  the four measures and the falls. A family-balanced score is used because
+  the families trade off, and the ablation's all-ten score over-weighted the
+  four root/centroid measures.
+- **Safe:** median trunk/pelvis peak force at or below the walker's, and
+  median any-body peak force below limp's.
+- **Comes to rest:** at least 97% of falls. The 99% bar was unreachable in
+  the ablation (r_ground 0.97-0.98 on selection), and this keeps out the
+  restless policies (54-69%).
+- **Checkpoint per run:**
+  - choose among iterations 400 / 500 / 600 on selection bank 3;
+  - take the lowest size score among the safe candidates that come to rest;
+  - fallbacks are flagged.
+
+  Rule: `select_safe_small`.
+- **Reward and policy:**
+  - a reward whose every run has an eligible checkpoint ranks first;
+  - then the lowest mean size score over its 3 runs wins;
+  - the policy is that reward's best run.
+
+  Rule: `scripts/robot_round2_choose.py`. Chosen before the test.
+- **Test (fresh bank 7, once):** every run's choice, the original
+  SmallFall, walker and limp. Pass requires all of:
+  - size score below the original SmallFall's (paired Wilcoxon on per-fall
+    scores, p < 0.05) and below limp's (< 1);
+  - median ground covered below both limp's and the walker's;
+  - comes to rest in at least 97% of falls;
+  - safe.
+
+  The result is reported whatever it is (`robot_round2_summary.py`). The
+  ten-measure table is printed alongside.
+- **Code:**
+  - `fall_size_mix` in `protective_fall_env_cfg`;
+  - `--fall-size-mix`;
+  - new scripts `robot_select_safe_small.py`, `robot_round2_choose.py` and
+    `robot_round2_summary.py`;
+  - notebook `notebooks/g1_round2.ipynb`.
