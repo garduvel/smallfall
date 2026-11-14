@@ -41,12 +41,15 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--compare-npz", required=True)
     p.add_argument("--candidate", action="append", required=True, metavar="ARM=CHECKPOINT")
+    p.add_argument("--min-settled", type=float, default=abl.SAFE_MIN_SETTLED,
+                   help="rest-rate bar for eligibility (round 2: 0.97; round 3, with the settle lock: 0.99)")
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
     cands = dict(c.split("=", 1) for c in args.candidate)
     per_arm = load_arms(args.compare_npz, [*cands, "walker", "limp"])
-    out = abl.select_safe_small(per_arm, list(cands))
+    out = abl.select_safe_small(per_arm, list(cands), min_settled=args.min_settled)
+    out["min_settled"] = args.min_settled
     out["checkpoint"] = cands[out["selected"]]
     out["checkpoints"] = cands
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

@@ -72,9 +72,11 @@ LIMP_TORQUE_TOLERANCE_NM = 1e-4
 CONTACT_N = 1.0  # a body counts as touching the ground above this net contact force
 
 
-def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False, robot: str = "go1"):
+def _env_cfg(state_bank_file: str, num_envs: int, limp: bool = False, robot: str = "go1",
+             settle_lock: bool = False, settle_lock_after_s: float | None = None):
     # Rewards never affect a replay, so the Go1 weights are fine for any robot.
-    cfg = protective_fall_env_cfg(robot, play=False, state_bank_file=state_bank_file)
+    cfg = protective_fall_env_cfg(robot, play=False, state_bank_file=state_bank_file,
+                                  settle_lock=settle_lock, settle_lock_after_s=settle_lock_after_s)
     cfg.scene.num_envs = num_envs
     cfg.auto_reset = False
     cfg.events["reset_fall_state"].params["sequential"] = True
@@ -111,8 +113,14 @@ def _load_actor(checkpoint: str, args, device: str):
 
 
 def run_arm(arm: str, actor, args, num_envs: int, device: str):
-    env = ManagerBasedRlEnv(cfg=_env_cfg(args.state_bank_file, num_envs, limp=(arm == "limp"), robot=args.robot),
+    lock = arm in args.locked_arms
+    env = ManagerBasedRlEnv(cfg=_env_cfg(args.state_bank_file, num_envs, limp=(arm == "limp"), robot=args.robot,
+                                         settle_lock=lock, settle_lock_after_s=args.settle_lock_after_s),
                             device=device)
+    lock_term = env.action_manager.get_term("joint_pos") if lock else None
+    # Settle lock state at the end of each first fall (-1 = never locked).
+    lock_rec = {"locked": torch.zeros(num_envs, device=device), "locked_by_timer": torch.zeros(num_envs, device=device),
+                "lock_s": torch.full((num_envs,), -1.0, device=device)}
     robot = env.scene["robot"]
     sensor = env.scene[CONTACT_SENSOR]
     critical = set(get_profile(args.robot).vulnerability_regions["high"])
@@ -153,12 +161,16 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
             sizer.update(root_xy=robot.data.root_link_pos_w[:, :2], body_xy=body_xy,
                          contact_xy=body_xy[:, contact_idx], in_contact=torch.norm(sensor.data.force, dim=-1) > CONTACT_N,
                          ended=(terminated | truncated).bool())
+            if lock_term is not None:
+                for k, v in (("locked", lock_term.locked.float()), ("locked_by_timer", lock_term.locked_by_timer.float()),
+                             ("lock_s", torch.where(lock_term.locked, lock_term.lock_step.float() * env.step_dt,
+                                                    torch.full_like(lock_rec["lock_s"], -1.0)))):
+                    lock_rec[k] = torch.where(ended, v, lock_rec[k])
             if tracker.all_done:
                 break
             done_ids = (terminated | truncated).nonzero(as_tuple=False).squeeze(-1)
             if len(done_ids) > 0:
                 obs, _ = env.reset(env_ids=done_ids)
-            del ended
     env.close()
 
     if not tracker.all_done:
@@ -172,6 +184,10 @@ def run_arm(arm: str, actor, args, num_envs: int, device: str):
     assert np.allclose(sizes["envelope_growth_m"], per_fall["envelope_growth_m"], atol=1e-5), \
         "the two trackers disagree on ground covered"
     per_fall.update({f"size__{k}": v for k, v in sizes.items()})
+    per_fall.update({k: v.cpu().numpy() for k, v in lock_rec.items()})
+    if lock:
+        print(f"[compare] {arm}: settle lock used in {per_fall['locked'].mean():.1%} of falls "
+              f"({per_fall['locked_by_timer'].mean():.1%} by the timer)")
     if arm == "limp":
         worst = float(per_fall["peak_torque_nm"].max())
         if worst > LIMP_TORQUE_TOLERANCE_NM:
@@ -192,7 +208,11 @@ def main() -> None:
     p.add_argument("--extra-policy", action="append", default=[], metavar="LABEL=CHECKPOINT",
                    help="also replay this checkpoint on the same falls (per-fall arrays only; "
                         "the verdicts stay protective vs walker/limp). Repeatable.")
+    p.add_argument("--locked-arms", default="", help="comma-separated arm labels replayed with the settle lock "
+                   "(protective/settle_lock.py); a checkpoint can appear twice, under two labels, to compare")
+    p.add_argument("--settle-lock-after-s", type=float, default=None, help="default: settle_lock.LOCK_AFTER_S")
     args = p.parse_args()
+    args.locked_arms = tuple(a for a in args.locked_arms.split(",") if a)
     extras = {}
     for item in args.extra_policy:
         label, _, ckpt = item.partition("=")
@@ -212,6 +232,9 @@ def main() -> None:
     out_path = Path(args.output or f"outputs/{args.robot}_protective_compare_seed{args.seed}.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arms = ARMS + tuple(extras)
+    unknown = set(args.locked_arms) - set(arms)
+    if unknown or "limp" in args.locked_arms:
+        raise ValueError(f"[compare] bad --locked-arms {sorted(unknown) or ['limp']} (limp has no motors to lock)")
     print(f"[compare] {num_envs} fall states x {len(arms)} arms")
 
     actors = {

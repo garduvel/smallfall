@@ -48,7 +48,7 @@ def main() -> None:
         raise FileNotFoundError(args.choices)
     choices = {}
     for f in files:
-        m = re.search(r"r2sel_(.+)_choice\.json$", f)
+        m = re.search(r"r\d+sel_(.+)_choice\.json$", f)  # g1_r2sel_ (round 2), g1_r3sel_ (round 3)
         choices[m.group(1)] = json.loads(Path(f).read_text())
     out = choose(choices)
     Path(args.output).write_text(json.dumps(out, indent=2))

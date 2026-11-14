@@ -107,6 +107,7 @@ def train_one_seed(args: argparse.Namespace, seed: int) -> Path:
             peak_force_weight=peak_force_weight, weight_overrides=weight_overrides,
             fall_size_measure=args.fall_size_measure, fall_size_weight=fall_size_weight,
             log_fall_sizes=args.log_fall_sizes, fall_size_mix=fall_size_mix,
+            settle_lock=args.settle_lock, settle_lock_after_s=args.settle_lock_after_s,
         )
 
     env_cfg = env_cfg_factory(play=False)
@@ -196,6 +197,11 @@ def main() -> None:
                         help="e.g. envelope_growth_m=0.5,hull_growth_m2=0.5: fractions of each sized weight")
     parser.add_argument("--log-fall-sizes", dest="log_fall_sizes", action="store_true",
                         help="log every fall-size measure as Episode_Metrics/fallsize_<m> (for sizing weights)")
+    parser.add_argument("--settle-lock", dest="settle_lock", action="store_true",
+                        help="joints hold their pose once the fall has run --settle-lock-after-s or the robot "
+                        "is low and nearly still (protective/settle_lock.py); round 3")
+    parser.add_argument("--settle-lock-after-s", dest="settle_lock_after_s", type=float, default=None,
+                        help="default: settle_lock.LOCK_AFTER_S")
     parser.add_argument("--run-tag", dest="run_tag", default="", help="inserted in the run directory name")
     parser.add_argument("--env.scene.num-envs", dest="env_scene_num_envs", type=int, default=4096)
     parser.add_argument("--eval.num-envs", dest="eval_num_envs", type=int, default=256)

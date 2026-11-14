@@ -228,6 +228,8 @@ def protective_fall_env_cfg(
     fall_size_weight: float | None = None,
     log_fall_sizes: bool = False,
     fall_size_mix: dict[str, float] | None = None,
+    settle_lock: bool = False,
+    settle_lock_after_s: float | None = None,
 ):
     """Protective-fall task cfg for `robot`, built on its velocity task.
     For the Go1 with no overrides it is exactly the round-8 task.
@@ -254,6 +256,13 @@ def protective_fall_env_cfg(
     registration (mirrors scripts/go1_wild_push_predictor.py's
     build_impulse_env_cfg_factory pattern for the same reason: a fixed
     module-level `register_mjlab_task` call can't take a per-run CLI arg).
+
+    `settle_lock` (G1 round 3, DEVIATIONS.md 2026-11-14): replace the
+    joint_pos action with settle_lock.SettleLockAction -- joints hold their
+    pose once the fall has run `settle_lock_after_s` (default
+    settle_lock.LOCK_AFTER_S) or the robot is low and nearly still -- and log
+    Episode_Metrics/settle_locked. The policy's inputs and outputs are
+    unchanged, so any checkpoint runs with or without it.
 
     `peak_force_weight`: weight of round 8's peak-impact term. 0.0 drops the
     term, which is exactly the round-7 reward (inference never reads rewards,
@@ -411,5 +420,14 @@ def protective_fall_env_cfg(
     if log_fall_sizes:
         cfg.metrics.update({f"fallsize_{m}": MetricsTermCfg(func=fall_size_increment, params=size_params(m), reduce="sum")
                             for m in SIZE_METRICS})
+
+    if settle_lock:
+        from cartpole_term.protective import settle_lock as sl
+
+        extra = {} if settle_lock_after_s is None else {"lock_after_s": settle_lock_after_s}
+        cfg.actions["joint_pos"] = sl.settle_lock_action_cfg(
+            cfg.actions["joint_pos"],
+            still_max_height_m=sl.STILL_MAX_HEIGHT_FRACTION * sl.STANDING_ROOT_HEIGHT_M[robot], **extra)
+        cfg.metrics["settle_locked"] = MetricsTermCfg(func=sl.settle_locked, params={}, reduce="max")
 
     return cfg

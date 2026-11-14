@@ -5046,3 +5046,48 @@ test once on bank 7, 501 falls). Results: `outputs/g1_round2/`, zip in
 - Caveat: the single-env video overflowed MuJoCo Warp's contact pool (fixed,
   entry above). Whether the batched T/X cells printed the same warning has not
   been checked from the logs.
+
+## 2026-11-14 -- G1 round 3 plan: the settle lock
+
+User: add a mechanic that makes every fall come to rest if it does not on
+its own ("joints lock after a certain amount of time"), then take the top 4
+policies by size score, rerun with the lock and evaluate. "Top 4" = the
+reward ablation's top four by size score on bank 6: hull growth (0.815),
+centroid travel (0.840), hull area (0.862), floor touched (0.865).
+
+**The lock** (`src/cartpole_term/protective/settle_lock.py`, our own design):
+the task's joint_pos action is replaced by a subclass of mjlab's
+JointPositionAction. An env locks once per episode when the fall has run
+3.0 s (round 2's chosen policy: median rest 2.6 s, 90th percentile 3.4 s, so
+most falls never feel it), or earlier when the pelvis is below 0.38 m (half
+the standing height) and root speed is below 0.3 m/s and 0.75 rad/s (1.5x
+the `settled` thresholds) for 0.3 s. From then on every joint's target is its
+position at the lock step (normal PD hold), and the policy's actions are
+ignored. Hold, not limp: limp limbs sag outward and grow the footprint.
+"Came to rest" is still the unchanged `settled` physics check. The policy's
+inputs and outputs are unchanged, so any checkpoint runs with or without it.
+mjlab facts read from the 1.6.0 source: process_action runs once per policy
+step before physics and before episode_length_buf is incremented;
+JointPositionAction sends `_processed_actions - encoder_bias` as the target,
+so `joint_pos_biased` holds the current pose.
+
+**Training:** the four rewards (single-measure weights from
+rewardablation1's g1_fall_size_weights.json), lock on, seeds 0 and 1, 601
+iterations, train bank 5, candidates 400/500/600. Two runs per reward (not
+three) to keep the run near 4 h.
+
+**Selection (bank 3, lock on):** round 2's rule (safe, then lowest size
+score) with the rest bar raised from 97% to **99%**; reward and policy by
+robot_round2_choose.py's rule.
+
+**Test (bank 8, new, used once):** the original SmallFall (no lock), walker,
+limp, every round-3 run (lock on), and existing policies each replayed
+without and with the lock (test only, no retraining): the original SmallFall,
+round 2's hullgrow_s1 and hullgrow_s2, and the four reward-ablation picks.
+
+**Pass (chosen round-3 policy), fixed now:** comes to rest in >= 99% of
+falls; safe (median trunk force <= walker's, any-body force < limp's);
+smaller than the original SmallFall (size score ratio < 1, paired Wilcoxon
+p < 0.05) and than limp; ground covered below limp's and the walker's; size
+score <= 1.05x round 2's hullgrow_s2 (no lock) on the same falls. Reported
+whatever it is, with the share of falls that needed the lock.

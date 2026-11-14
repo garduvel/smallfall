@@ -109,7 +109,8 @@ WATCH_NCONMAX = 128
 
 
 def _build_watch_env_cfg(args: argparse.Namespace):
-    cfg = protective_fall_env_cfg(args.robot, play=False, state_bank_file=args.state_bank_file)
+    cfg = protective_fall_env_cfg(args.robot, play=False, state_bank_file=args.state_bank_file,
+                                  settle_lock=args.settle_lock)
     cfg.scene.num_envs = 1
     cfg.sim.nconmax = WATCH_NCONMAX
     cfg.viewer.azimuth = args.camera_azimuth
@@ -250,6 +251,8 @@ def main() -> None:
         "--camera-distance", dest="camera_distance", type=float, default=None,
         help="Override mjlab's default viewer distance if the robot reads too small/large on camera.",
     )
+    parser.add_argument("--settle-lock", action="store_true",
+                        help="record with the settle lock on (protective/settle_lock.py)")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
