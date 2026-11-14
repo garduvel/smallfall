@@ -5011,6 +5011,8 @@ leaves `cfg.sim.nconmax = None` (mjlab `unitree_g1_flat_env_cfg`), so MuJoCo
 Warp sizes the contact pool heuristically per world; with one world (the
 video) that is about 48 contacts, and a fallen G1 has up to 54, so contacts
 were dropped in the video only. Training and the compare replays run
-thousands of worlds that share one pool, so they are not affected. Both watch
+thousands of worlds that share one pool (about 48 x worlds; MuJoCo Warp
+`_default_nconmax`), so they overflow only if the average world exceeds ~48
+contacts -- which would print the same message in those cells' logs. Both watch
 scripts now set `cfg.sim.nconmax = 128` on their single-env config. Physics
 of the policy and every reported number are unchanged; only the videos.
