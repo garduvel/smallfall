@@ -210,7 +210,7 @@ def main() -> None:
                         "the verdicts stay protective vs walker/limp). Repeatable.")
     p.add_argument("--locked-arms", default="", help="comma-separated arm labels replayed with the settle lock "
                    "(protective/settle_lock.py); a checkpoint can appear twice, under two labels, to compare")
-    p.add_argument("--settle-lock-after-s", type=float, default=None, help="default: settle_lock.LOCK_AFTER_S")
+    p.add_argument("--settle-lock-after-s", type=float, default=None, help="default: settle_lock.LOCK_AFTER_S_BY_ROBOT[robot]")
     args = p.parse_args()
     args.locked_arms = tuple(a for a in args.locked_arms.split(",") if a)
     extras = {}

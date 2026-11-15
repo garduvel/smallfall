@@ -9,6 +9,10 @@ fall_envelope_growth weight is the anchor.
 
     python scripts/robot_calibrate_fall_size.py --run-dir logs/rsl_rl/g1_protective_fall/sizecal \\
         --weights-json outputs/g1_protective_weights.json --output outputs/g1_fall_size_weights.json
+
+The Go1 has no calibrated weights file (its weights are env_cfg's own), so
+it passes its ground-covered weight directly: --envelope-weight -30
+(env_cfg.FALL_ENVELOPE_WEIGHT).
 """
 
 from __future__ import annotations
@@ -57,11 +61,19 @@ def read_sums(run_dir: str) -> dict[str, float]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-dir", required=True)
-    p.add_argument("--weights-json", required=True, help="robot_calibrate_protective.py output")
+    anchor = p.add_mutually_exclusive_group(required=True)
+    anchor.add_argument("--weights-json", help="robot_calibrate_protective.py output")
+    anchor.add_argument("--envelope-weight", type=float,
+                        help="the ground-covered weight itself (Go1: env_cfg.FALL_ENVELOPE_WEIGHT = -30)")
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
-    envelope_weight = json.loads(Path(args.weights_json).read_text())["weights"]["fall_envelope_growth"]
+    if args.weights_json:
+        envelope_weight = json.loads(Path(args.weights_json).read_text())["weights"]["fall_envelope_growth"]
+    else:
+        envelope_weight = args.envelope_weight
+    if envelope_weight >= 0:
+        raise ValueError(f"the ground-covered weight must be negative (a penalty), got {envelope_weight}")
     out = _cal.fall_size_weights(read_sums(args.run_dir), envelope_weight)
     out["run_dir"] = args.run_dir
     out["iterations"] = list(_cal.CALIBRATION_ITERATIONS)

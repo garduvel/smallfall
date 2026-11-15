@@ -146,11 +146,12 @@ def record_take(arm, raw, deferred, walker_actor, protective_actor, predictor, t
     lock = None
     if args.settle_lock and arm == "handoff":
         from cartpole_term.protective.settle_lock import (
-            STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
+            LOCK_AFTER_S_BY_ROBOT, STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
 
         term = raw.action_manager.get_term("joint_pos")
         lock = ExternalSettleLock(1, term.action_dim, device, STEP_SECONDS,
-                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot])
+                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot],
+                                  lock_after_s=LOCK_AFTER_S_BY_ROBOT[args.robot])
 
     def root_pose_local():
         return torch.cat([robot.data.root_link_pos_w - raw.scene.env_origins, robot.data.root_link_quat_w], dim=-1)

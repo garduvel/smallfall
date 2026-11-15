@@ -260,7 +260,7 @@ def protective_fall_env_cfg(
     `settle_lock` (G1 round 3, DEVIATIONS.md 2026-11-14): replace the
     joint_pos action with settle_lock.SettleLockAction -- joints hold their
     pose once the fall has run `settle_lock_after_s` (default
-    settle_lock.LOCK_AFTER_S) or the robot is low and nearly still -- and log
+    settle_lock.LOCK_AFTER_S_BY_ROBOT[robot]) or the robot is low and nearly still -- and log
     Episode_Metrics/settle_locked. The policy's inputs and outputs are
     unchanged, so any checkpoint runs with or without it.
 
@@ -424,7 +424,7 @@ def protective_fall_env_cfg(
     if settle_lock:
         from cartpole_term.protective import settle_lock as sl
 
-        extra = {} if settle_lock_after_s is None else {"lock_after_s": settle_lock_after_s}
+        extra = {"lock_after_s": sl.LOCK_AFTER_S_BY_ROBOT[robot] if settle_lock_after_s is None else settle_lock_after_s}
         cfg.actions["joint_pos"] = sl.settle_lock_action_cfg(
             cfg.actions["joint_pos"],
             still_max_height_m=sl.STILL_MAX_HEIGHT_FRACTION * sl.STANDING_ROOT_HEIGHT_M[robot], **extra)

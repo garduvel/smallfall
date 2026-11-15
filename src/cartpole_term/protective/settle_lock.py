@@ -45,6 +45,11 @@ STILL_MAX_HEIGHT_FRACTION = 0.5  # of the robot's standing root height
 # Standing root height, mjlab init_state (same numbers as START_HEIGHT_M in
 # scripts/robot_fall_size_ablation.py).
 STANDING_ROOT_HEIGHT_M = {"go1": 0.278, "g1": 0.76}
+# Timer per robot. The G1's 3.0 s is 60% of its 5 s episode cap; the Go1's
+# cap is 3 s, so 3.0 s would never fire there. Scaled like the cap itself
+# (fall time ~ sqrt(start height), env_cfg.PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT):
+# 3.0 / 1.65 = 1.8 s, the same 60% of the Go1's cap (DEVIATIONS.md 2026-11-15).
+LOCK_AFTER_S_BY_ROBOT = {"go1": 1.8, "g1": LOCK_AFTER_S}
 
 
 @dataclass(kw_only=True)

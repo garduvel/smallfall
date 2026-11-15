@@ -8,7 +8,7 @@ Upload `cartpole_term_code.zip` (rebuild with `python3 tools/build_code_zip.py`)
 | Notebook | What it is for |
 |---|---|
 | `colab_entry.ipynb`, `colab_entry_2.ipynb` | The cartpole experiment (spec: `docs/CARTPOLE_SPEC.md`). |
-| `go1_end_to_end.ipynb` | The whole Go1 pipeline in one file. One walker, then everything after it repeated per seed in `SEEDS` (default five), combined by `scripts/go1_multiseed_stats.py` into one set of box plots. Resumes from Drive after a disconnect. `SEEDS = (0,)` is the original single run. |
+| `go1_end_to_end.ipynb` | The whole Go1 pipeline in one file, laid out part for part like `g1_end_to_end.ipynb`: one walker (reused from Drive run `multiseed1` by default, or trained), then per seed in `SEEDS` (three): 150 N push predictor, flag-moment banks, fall-size weights calibrated once, the four new SmallFall policies (hull growth, centroid travel, hull area, floor touched; 600 iterations, settle lock at run time) and the original SmallFall (round-8 reward, iteration 200), live hand-off and test with hull growth, all seven policies on three evaluation banks, significance tests; then the multi-seed and seven-policy box plots and four videos. Clones the public repo. Built by `tools/notebook_builders/build_go1_end_to_end_nb.py`. The earlier five-seed version (original SmallFall only) is `archive/go1_end_to_end_multiseed1.ipynb`. |
 | `g1_end_to_end.ipynb` | The whole G1 humanoid pipeline in one file, the counterpart of `go1_end_to_end.ipynb`: one walker (reused from Drive by default, or trained), then per seed in `SEEDS` (three): 200 N push predictor, flag-moment banks, SmallFall with the final recipe (hull-growth reward, 600 iterations, settle lock at run time), live hand-off, test, three evaluation banks and significance tests; then the multi-seed box plots and four videos. Clones the public repo. Built by `tools/notebook_builders/build_g1_end_to_end_nb.py`. |
 | `go1_round8_redo.ipynb` | Round 8 of the protective policy (run 2026-10-03 with its first version; produced the reported policy, 8b iteration 200): trains two variants, picks one checkpoint by a fixed rule, tests it once on a fresh bank, renders the demo video. Upload folder: `colab_uploads/round8/`. |
 | `go1_recovery_eval.ipynb` | Confirmatory statistical evaluation of the three recovery policies: three fresh flag banks (about 1,500 paired falls), a mid-fall bank, a repeat replay, then the paired tests and figures. Upload folder: `colab_uploads/recovery_eval/`. |
@@ -32,6 +32,7 @@ steps are all in `go1_end_to_end.ipynb`. Their upload folders were removed
 
 | Notebook | Gate | What it ran |
 |---|---|---|
+| `go1_end_to_end_multiseed1.ipynb` | all | The five-seed end-to-end run (`multiseed1`, `docs/GO1_MULTISEED_REPORT.md`): original SmallFall only, round-8 reward, iteration 200. |
 | `part_a_gate0_gate1.ipynb` | 0-2 | Task inspection, first walker training, push failure-rate sweep. |
 | `go1_train_full.ipynb` | 1 | The 10,000-iteration walker (`checkpoints/model_9999.pt`). |
 | `go1_watch_fixed_command.ipynb` | 1 | Walker video at a fixed velocity command. |

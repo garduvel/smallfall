@@ -201,7 +201,7 @@ def main() -> None:
                         help="joints hold their pose once the fall has run --settle-lock-after-s or the robot "
                         "is low and nearly still (protective/settle_lock.py); round 3")
     parser.add_argument("--settle-lock-after-s", dest="settle_lock_after_s", type=float, default=None,
-                        help="default: settle_lock.LOCK_AFTER_S")
+                        help="default: settle_lock.LOCK_AFTER_S_BY_ROBOT[robot]")
     parser.add_argument("--run-tag", dest="run_tag", default="", help="inserted in the run directory name")
     parser.add_argument("--env.scene.num-envs", dest="env_scene_num_envs", type=int, default=4096)
     parser.add_argument("--eval.num-envs", dest="eval_num_envs", type=int, default=256)

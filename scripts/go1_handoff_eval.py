@@ -154,11 +154,12 @@ def run_arm(arm, raw, walker_actor, protective_actor, predictor, threshold, args
     lock = None
     if getattr(args, "settle_lock", False) and arm == "handoff":
         from cartpole_term.protective.settle_lock import (
-            STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
+            LOCK_AFTER_S_BY_ROBOT, STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
 
         term = raw.action_manager.get_term("joint_pos")
         lock = ExternalSettleLock(n, term.action_dim, device, STEP_SECONDS,
-                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot])
+                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot],
+                                  lock_after_s=LOCK_AFTER_S_BY_ROBOT[args.robot])
     assert "fell_over" in raw.cfg.terminations, f"no fell_over term: {list(raw.cfg.terminations)}"
 
     def root_pose_local():

@@ -243,3 +243,47 @@ def test_external_lock_clock_starts_at_the_switch_and_holds_via_the_action():
     assert torch.allclose(offset + scale * out[0], torch.full((3,), 15.0))
     assert torch.allclose(out[1], torch.zeros(3))
     assert lock.locked_by_timer[0]
+
+
+# ---- Go1 end-to-end (DEVIATIONS.md 2026-11-15) ---------------------------------
+
+def test_lock_timer_fits_inside_each_robots_episode_cap():
+    # G1 unchanged; Go1 = the G1's 3 s scaled by sqrt(start height), the same
+    # 60% of its (3 s) episode cap -- 3 s would never fire on the Go1.
+    caps = {"go1": 3.0, "g1": 5.0}
+    assert sl.LOCK_AFTER_S_BY_ROBOT["g1"] == sl.LOCK_AFTER_S == 3.0
+    assert sl.LOCK_AFTER_S_BY_ROBOT["go1"] == pytest.approx(3.0 / (0.76 / 0.278) ** 0.5, abs=0.05)
+    for robot, cap in caps.items():
+        assert sl.LOCK_AFTER_S_BY_ROBOT[robot] / cap == pytest.approx(0.6, abs=0.01)
+
+
+def _builder_settings(name):
+    text = (Path(__file__).resolve().parent.parent / "tools" / "notebook_builders" / name).read_text()
+    return dict(re.findall(r'"(\w+)": "(\w+_m2?)",', text)), text
+
+
+def test_go1_end_to_end_notebook_mirrors_the_g1_one():
+    g1_rewards, g1 = _builder_settings("build_g1_end_to_end_nb.py")
+    go1_rewards, go1 = _builder_settings("build_go1_end_to_end_nb.py")
+    assert go1_rewards == g1_rewards and list(go1_rewards)[0] == "hullgrow"
+    # same parts, same order
+    parts = lambda t: re.findall(r'md\("(?:# Part \w|## [A-Z]\d?\.)', t)
+    assert parts(go1) == parts(g1)
+    # Go1's own robot, push and original SmallFall; no G1 leftovers
+    assert "--robot g1" not in go1 and "g1_" not in go1.replace("g1_end_to_end", "")
+    assert "SF_ITERATION = 200" in go1 and "IMPULSE_N = 150" in go1 and "--envelope-weight" in go1
+
+
+def test_fall_size_calibration_takes_the_go1_envelope_weight(tmp_path):
+    cal = load_script("scripts/robot_calibrate_fall_size.py", "_cal_fs_go1")
+    sums = {m: 1.0 for m in cal.SIZE_METRICS}
+    sums["envelope_growth_m"], sums["hull_growth_m2"] = 0.5, 0.25
+    out = tmp_path / "w.json"
+    with mock.patch.object(cal, "read_sums", return_value=sums), \
+         mock.patch.object(sys, "argv", ["x", "--run-dir", "r", "--envelope-weight", "-30", "--output", str(out)]):
+        cal.main()
+    w = json.loads(out.read_text())["weights"]
+    assert w["envelope_growth_m"] == -30.0 and w["hull_growth_m2"] == pytest.approx(-60.0)
+    with mock.patch.object(sys, "argv", ["x", "--run-dir", "r", "--envelope-weight", "30", "--output", str(out)]), \
+         pytest.raises(ValueError):
+        cal.main()
