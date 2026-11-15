@@ -5156,3 +5156,34 @@ Differences from the Go1 notebook, and why:
   defaults and file names are unchanged. Single-env videos get nconmax 128.
 - Not yet run on the GPU: the G1 hand-off, the G1 overlay and demo videos,
   and the hand-off lock run for the first time in this notebook.
+
+## 2026-11-15 -- G1 end-to-end results (3 seeds)
+
+Results: `outputs/g1_end_to_end/`, zip in `archive/g1_end_to_end_e2e1.zip`.
+Walker reused (walker2); reward weights reused; hull-growth SmallFall, 600
+iterations, settle lock at run time. Fresh banks (seeds 1004-3008).
+
+- **Per-seed test (E2): PASS in 3 of 3.** Ground covered 0.573 / 0.554 /
+  0.515 m (walker 1.41 / 1.63 / 1.35, limp 0.89 / 0.90 / 0.85); rest 100%
+  in all three; trunk force median 0 N; any-body 1,391 / 1,210 / 1,391 N
+  (limp 2,464 / 2,436 / 2,296).
+- **Statistics (about 1,500 falls per seed, 4,547 total):** ground covered
+  0.537 +- 0.029 m vs walker 1.44 and limp 0.879; lower than limp on 96.7%
+  of falls, significant in 3/3 seeds. Trunk force 0 N vs 1,685 (walker) and
+  1,283 (limp); any-body force 1,302 vs 2,298 and 2,431; peak torque 68 vs
+  139 Nm (walker); rest 100% (walker 8%). Rest takes 114 steps vs limp's 78
+  (limp is still faster to stop).
+- **Settle lock:** fires in every fall (the low-and-still trigger, as in
+  round 3); the 3 s timer was needed in 1.0-4.8% of falls (test) and
+  0.9-3.9% (hand-off).
+- **Predictor:** AUPRC 0.943 +- 0.005 (logistic 0.902); live recall 1.00,
+  live precision 0.976, median warning 17 steps (0.34 s).
+- **Live hand-off:** Gate 6 PASS in 3/3 (weights frozen, no switch back,
+  live recall 1.00). Gate 7 (paired) not evaluable: only 30-36% of event
+  trials pair across arms (need 95%), as on the Go1 (MuJoCo Warp is not
+  bit-deterministic). Unpaired, all event trials: hand-off ground covered
+  0.52-0.56 m and rest 99.9-100% vs the walker continuing 1.46-1.74 m and
+  0-0.1%.
+- Demo video: three takes, flag steps matched in all three; hand-off ground
+  covered 0.56 / 0.29 / 1.09 m vs walker 1.64 / 2.07 / 2.36, limp 0.94 /
+  0.73 / 1.61.
