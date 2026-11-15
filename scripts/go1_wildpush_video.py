@@ -102,8 +102,8 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from cartpole_term.common.commands import force_forward_only_commands  # noqa: E402
-from cartpole_term.go1.env_cfg import TASK_ID, go1_velocity_term_env_cfg  # noqa: E402
-from cartpole_term.go1.runner import Go1FrozenEvalRunner  # noqa: E402
+from cartpole_term.common.backend import get_robot_backend  # noqa: E402
+from cartpole_term.common.robot_profile import get_profile  # noqa: E402
 from cartpole_term.runner import build_runner_from_checkpoint  # noqa: E402
 from go1_wild_push_predictor import (  # noqa: E402
     DEFAULT_IMPULSE_COOLDOWN_S,
@@ -164,9 +164,13 @@ def record_wildpush_predictor_overlay(args: argparse.Namespace, device: str) -> 
     # ManagerBasedRlEnv (and therefore EventManager) is ever constructed.
     shipped_velocity_range: dict = {}
 
+    backend = get_robot_backend(args.robot)
+    push_body = get_profile(args.robot).push_body
+
     def wild_video_env_cfg_factory(play: bool = False):
-        cfg = go1_velocity_term_env_cfg(play=play)
+        cfg = backend.env_cfg_factory(play=play)
         cfg.scene.num_envs = 1
+        cfg.sim.nconmax = 128  # one world: room for a fallen G1's contacts (see go1_watch_protective_episodes.py)
         cfg.viewer.azimuth = args.camera_azimuth
         cfg.viewer.elevation = args.camera_elevation
         if args.camera_distance is not None:
@@ -185,7 +189,7 @@ def record_wildpush_predictor_overlay(args: argparse.Namespace, device: str) -> 
                     "torque_range": (-args.impulse_torque, args.impulse_torque),
                     "duration_s": DEFAULT_IMPULSE_DURATION_S,
                     "cooldown_s": DEFAULT_IMPULSE_COOLDOWN_S,
-                    "asset_cfg": SceneEntityCfg("robot", body_names=("trunk",)),
+                    "asset_cfg": SceneEntityCfg("robot", body_names=(push_body,)),
                 },
             )
         else:
@@ -203,9 +207,9 @@ def record_wildpush_predictor_overlay(args: argparse.Namespace, device: str) -> 
         args.checkpoint_file,
         seed=args.seed,
         device=device,
-        runner_cls=Go1FrozenEvalRunner,
+        runner_cls=backend.runner_cls,
         env_cfg_factory=wild_video_env_cfg_factory,
-        task_id=TASK_ID,
+        task_id=backend.task_id,
         extra_scalar_metric_fn=None,
     )
     actor_snapshot = {k: v.clone() for k, v in runner.alg.actor.state_dict().items()}
@@ -216,7 +220,7 @@ def record_wildpush_predictor_overlay(args: argparse.Namespace, device: str) -> 
     if args.mechanism == "impulse":
         print(
             f"[wildpush-video] mechanism=impulse: force=+-{args.impulse_force}N, "
-            f"torque=+-{args.impulse_torque}Nm, body=trunk "
+            f"torque=+-{args.impulse_torque}Nm, body={push_body} "
             f"(mass-scaled reference range {MASS_SCALED_FORCE_RANGE_N} N)"
         )
     else:
@@ -286,7 +290,7 @@ def record_wildpush_predictor_overlay(args: argparse.Namespace, device: str) -> 
     import imageio
 
     tag = f"impulse{args.impulse_force}N" if args.mechanism == "impulse" else f"scale{args.push_scale}"
-    final_path = outputs_dir / f"go1_wildpush_overlay_{tag}_seed{args.seed}_take{args.take}.mp4"
+    final_path = outputs_dir / f"{args.robot}_wildpush_overlay_{tag}_seed{args.seed}_take{args.take}.mp4"
     fps = round(1.0 / STEP_SECONDS)
     writer = imageio.get_writer(str(final_path), fps=fps)
     written = 0
@@ -329,7 +333,9 @@ def main() -> None:
         "('goes flying') at scales strong enough to induce a reasonable failure rate.",
     )
     parser.add_argument("--push-scale", dest="push_scale", type=float, default=None, help="velocity mechanism only.")
-    parser.add_argument("--impulse-force", dest="impulse_force", type=float, default=DEFAULT_IMPULSE_FORCE_N, help="impulse mechanism only, Newtons.")
+    parser.add_argument("--robot", choices=("go1", "g1"), default="go1")
+    parser.add_argument("--impulse-force", dest="impulse_force", type=float, default=None,
+                        help=f"impulse mechanism only, Newtons; default the robot's RobotProfile.impulse_force_n (Go1 {DEFAULT_IMPULSE_FORCE_N:g})")
     parser.add_argument("--impulse-torque", dest="impulse_torque", type=float, default=DEFAULT_IMPULSE_TORQUE_N, help="impulse mechanism only, Nm.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--camera-azimuth", dest="camera_azimuth", type=float, default=90.0)
@@ -354,6 +360,8 @@ def main() -> None:
         "filename, so multiple independent takes don't overwrite each other.",
     )
     args = parser.parse_args()
+    if args.impulse_force is None:
+        args.impulse_force = get_profile(args.robot).impulse_force_n
     if args.min_failures < MIN_FAILURE_EPISODES_FLOOR:
         raise ValueError(f"--min-failures={args.min_failures} is below the required minimum of {MIN_FAILURE_EPISODES_FLOOR}.")
     if args.mechanism == "velocity" and args.push_scale is None:

@@ -70,7 +70,7 @@ from tensordict import TensorDict  # noqa: E402
 
 from cartpole_term.common.deferred_reset import DeferredResetEnv  # noqa: E402
 from cartpole_term.common.perturbation import stop_perturbations_when_down  # noqa: E402
-from cartpole_term.common.robot_profile import GO1  # noqa: E402
+from cartpole_term.common.robot_profile import get_profile  # noqa: E402
 from cartpole_term.protective.compare import (  # noqa: E402
     EVENT_FLAG,
     EVENT_MISSED_FALL,
@@ -84,6 +84,7 @@ from cartpole_term.protective.env_cfg import (  # noqa: E402
     ANGULAR_SETTLED_THRESHOLD_RAD_S,
     LINEAR_SETTLED_THRESHOLD_MPS,
     PROTECTIVE_EPISODE_LENGTH_S,
+    PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT,
     SETTLED_HOLD_S,
     protective_contact_sensor_cfg,
 )
@@ -99,7 +100,14 @@ from go1_wild_push_predictor import (  # noqa: E402
 
 ARMS = ("handoff", "nominal")
 SEED_OFFSET = 500  # distinct from the collectors' offsets (300, 400)
-WINDOW_STEPS = round(PROTECTIVE_EPISODE_LENGTH_S / STEP_SECONDS)  # 150
+WINDOW_STEPS = round(PROTECTIVE_EPISODE_LENGTH_S / STEP_SECONDS)  # 150 (Go1)
+
+
+def window_steps(robot: str) -> int:
+    """The protective episode budget in steps: Go1 150 (3 s), G1 250 (5 s)."""
+    return round(PROTECTIVE_EPISODE_LENGTH_S_BY_ROBOT[robot] / STEP_SECONDS)
+
+
 HOLD_STEPS = round(SETTLED_HOLD_S / STEP_SECONDS)  # 25
 # A robot counts as down (pushes stop) once the fall termination fires or its
 # root drops below this fraction of its own height at reset. Our definition.
@@ -110,16 +118,17 @@ REPORT_METRICS = PASS_METRICS + ("root_travel_end_m", "steps", "settled", "mean_
 
 
 def make_env_cfg_factory(args):
+    robot = getattr(args, "robot", "go1")
     base = build_impulse_env_cfg_factory(
-        args.impulse_force, args.impulse_torque, DEFAULT_IMPULSE_DURATION_S, DEFAULT_IMPULSE_COOLDOWN_S
+        args.impulse_force, args.impulse_torque, DEFAULT_IMPULSE_DURATION_S, DEFAULT_IMPULSE_COOLDOWN_S, robot=robot
     )
 
     def factory(play: bool = False):
         cfg = base(play=play)
         cfg.auto_reset = False  # nothing is ever reset; DeferredResetEnv holds every done env
         # Room for a window opened on the last walking step to run its full 150 steps.
-        cfg.episode_length_s = (args.walk_steps + WINDOW_STEPS) * STEP_SECONDS
-        cfg.scene.sensors = (cfg.scene.sensors or ()) + (protective_contact_sensor_cfg(),)
+        cfg.episode_length_s = (args.walk_steps + window_steps(robot)) * STEP_SECONDS
+        cfg.scene.sensors = (cfg.scene.sensors or ()) + (protective_contact_sensor_cfg(robot),)
         if not getattr(args, "keep_pushing_when_down", False):
             # Pushes stop for a robot once it is on the ground (user requirement,
             # 2026-10-03); the loop sets env.perturbations_off from HandoffTrials.down.
@@ -138,9 +147,18 @@ def run_arm(arm, raw, walker_actor, protective_actor, predictor, threshold, args
     n = raw.num_envs
     robot = raw.scene["robot"]
     sensor = raw.scene[CONTACT_SENSOR]
-    critical = set(GO1.vulnerability_regions["high"])
+    critical = set(get_profile(args.robot).vulnerability_regions["high"])
     critical_mask = torch.tensor([name in critical for name in sensor.primary_names], device=device)
     assert critical_mask.any(), f"no critical bodies among sensor primaries {sensor.primary_names}"
+    win = window_steps(args.robot)
+    lock = None
+    if getattr(args, "settle_lock", False) and arm == "handoff":
+        from cartpole_term.protective.settle_lock import (
+            STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
+
+        term = raw.action_manager.get_term("joint_pos")
+        lock = ExternalSettleLock(n, term.action_dim, device, STEP_SECONDS,
+                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot])
     assert "fell_over" in raw.cfg.terminations, f"no fell_over term: {list(raw.cfg.terminations)}"
 
     def root_pose_local():
@@ -156,14 +174,14 @@ def run_arm(arm, raw, walker_actor, protective_actor, predictor, threshold, args
     initial_obs = obs["actor"].clone()
 
     trials = HandoffTrials(
-        handoff=(arm == "handoff"), walk_steps=args.walk_steps, window_steps=WINDOW_STEPS,
+        handoff=(arm == "handoff"), walk_steps=args.walk_steps, window_steps=win,
         hold_steps=HOLD_STEPS, lin_threshold=LINEAR_SETTLED_THRESHOLD_MPS,
         ang_threshold=ANGULAR_SETTLED_THRESHOLD_RAD_S,
         root_xy=robot.data.root_link_pos_w[:, :2], body_xy=robot.data.body_link_pos_w[..., :2],
         down_height=DOWN_HEIGHT_FRACTION * initial_pose[:, 2],
     )
     protective_env_steps = 0
-    max_steps = args.walk_steps + WINDOW_STEPS + 5
+    max_steps = args.walk_steps + win + 5
     t0 = time.time()
     with torch.inference_mode():
         for t in range(max_steps):
@@ -178,6 +196,14 @@ def run_arm(arm, raw, walker_actor, protective_actor, predictor, threshold, args
                 protective_actions = protective_actor(obs, stochastic_output=False)
                 actions = torch.where(latched.unsqueeze(-1), protective_actions, walker_actions)
                 protective_env_steps += int(latched.sum())
+                if lock is not None:
+                    actions = lock.apply(
+                        actions, active=latched, since=t - trials.flag_step,
+                        lin=torch.norm(robot.data.root_link_lin_vel_w, dim=-1),
+                        ang=torch.norm(robot.data.root_link_ang_vel_w, dim=-1),
+                        height=robot.data.root_link_pos_w[:, 2] - raw.scene.env_origins[:, 2],
+                        joint_pos_biased=robot.data.joint_pos_biased[:, term.target_ids],
+                        offset=term.offset, scale=term.scale)
 
             next_obs, reward, terminated, truncated, _ = deferred.step(actions)
             deferred.hold((terminated | truncated).nonzero(as_tuple=False).squeeze(-1))
@@ -213,6 +239,10 @@ def run_arm(arm, raw, walker_actor, protective_actor, predictor, threshold, args
     else:
         assert not result["latched"].any(), "nominal arm latched an env"
     result["protective_env_steps"] = np.array(protective_env_steps)
+    if lock is not None:
+        result["locked"] = lock.locked.float().cpu().numpy()
+        result["locked_by_timer"] = lock.locked_by_timer.float().cpu().numpy()
+        result["lock_steps_after_switch"] = lock.lock_step.cpu().numpy()
     result["initial_root_pose"] = initial_pose.cpu().numpy()
     result["initial_actor_obs"] = initial_obs.cpu().numpy()
     return result
@@ -263,7 +293,12 @@ def main() -> None:
                    help="only used to construct the protective runner's 1-env shape env; never sampled here")
     p.add_argument("--num-envs", type=int, default=1024)
     p.add_argument("--walk-steps", type=int, default=1000, help="walking budget per trial (1000 = the walker's 20 s episode)")
-    p.add_argument("--impulse-force", type=float, default=DEFAULT_IMPULSE_FORCE_N)
+    p.add_argument("--robot", choices=("go1", "g1"), default="go1")
+    p.add_argument("--settle-lock", action="store_true",
+                   help="after the switch, joints hold their pose once the protective policy has run 3 s or the "
+                   "robot is low and still (protective/settle_lock.py)")
+    p.add_argument("--impulse-force", type=float, default=None,
+                   help=f"N per axis; default the robot's RobotProfile.impulse_force_n (Go1 {DEFAULT_IMPULSE_FORCE_N:g})")
     p.add_argument("--impulse-torque", type=float, default=DEFAULT_IMPULSE_TORQUE_N)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--keep-pushing-when-down", action="store_true",
@@ -273,6 +308,8 @@ def main() -> None:
     args = p.parse_args()
     if args.smoke:
         args.num_envs, args.walk_steps = 64, 200
+    if args.impulse_force is None:
+        args.impulse_force = get_profile(args.robot).impulse_force_n
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required.")
@@ -287,27 +324,29 @@ def main() -> None:
     predictor = _load_predictor(args.predictor_file, int(metrics["obs_action_dim"]),
                                 tuple(metrics["predictor_hidden"]), device)
 
-    from cartpole_term.go1.env_cfg import TASK_ID as GO1_TASK_ID
-    from cartpole_term.go1.runner import Go1FrozenEvalRunner
+    from cartpole_term.common.backend import get_robot_backend
     from cartpole_term.runner import build_runner_from_checkpoint
 
+    backend = get_robot_backend(args.robot)
     walker_runner = build_runner_from_checkpoint(
         args.walker_checkpoint, seed=args.seed, eval_num_envs=args.num_envs, device=device,
-        runner_cls=Go1FrozenEvalRunner, env_cfg_factory=make_env_cfg_factory(args),
-        task_id=GO1_TASK_ID, extra_scalar_metric_fn=None,
+        runner_cls=backend.runner_cls, env_cfg_factory=make_env_cfg_factory(args),
+        task_id=backend.task_id, extra_scalar_metric_fn=None,
     )
     walker_runner.alg.eval_mode()
     protective_actor = _load_actor(args.protective_checkpoint,
-                                   SimpleNamespace(state_bank_file=args.state_bank_file, seed=args.seed), device)
+                                   SimpleNamespace(state_bank_file=args.state_bank_file, seed=args.seed, robot=args.robot),
+                                   device)
 
     nets = {"walker": walker_runner.alg.actor, "protective": protective_actor, "predictor": predictor}
     snapshots = {k: {n: v.clone() for n, v in m.state_dict().items()} for k, m in nets.items()}
 
     tag = "_smoke" if args.smoke else ""
-    out_path = Path(args.output or f"outputs/go1_handoff_eval{tag}_seed{args.seed}.json")
+    out_path = Path(args.output or f"outputs/{args.robot}_handoff_eval{tag}_seed{args.seed}.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[handoff] {args.num_envs} envs x {len(ARMS)} arms, threshold {threshold:.4f}, "
-          f"walk {args.walk_steps} steps, window {WINDOW_STEPS}, settle hold {HOLD_STEPS}")
+          f"walk {args.walk_steps} steps, window {window_steps(args.robot)}, settle hold {HOLD_STEPS}, "
+          f"robot {args.robot}, push {args.impulse_force:g} N, settle lock {args.settle_lock}")
 
     env = walker_runner._build_eval_env()
     # Everything that touches the env after it is built stays inside inference
@@ -375,7 +414,7 @@ def main() -> None:
         })
 
     report = {
-        "config": vars(args) | {"threshold": threshold, "window_steps": WINDOW_STEPS, "hold_steps": HOLD_STEPS,
+        "config": vars(args) | {"threshold": threshold, "window_steps": window_steps(args.robot), "hold_steps": HOLD_STEPS,
                                 "seed_offset": SEED_OFFSET, "arms": list(ARMS)},
         "gate6": gate6,
         "gate7": ablation,

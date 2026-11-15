@@ -140,3 +140,38 @@ def settle_locked(env, action_name: str = "joint_pos") -> torch.Tensor:
     """Log-only metric: 1 where the env has locked (reduce="max" gives the
     share of episodes that needed the lock)."""
     return env.action_manager.get_term(action_name).locked.float()
+
+
+class ExternalSettleLock:
+    """The same lock for a controller that switches to the protective policy
+    mid-episode (the live hand-off, scripts/go1_handoff_eval.py): the clock
+    starts at the switch, not at the episode start, and the hold is written
+    as an action, (pose - offset) / scale, through the env's own
+    JointPositionAction (whose processed target is offset + scale x action)."""
+
+    def __init__(self, n: int, action_dim: int, device, step_dt: float, still_max_height_m: float,
+                 lock_after_s: float = LOCK_AFTER_S, still_lin_mps: float = STILL_LIN_MPS,
+                 still_ang_rad_s: float = STILL_ANG_RAD_S, still_hold_s: float = STILL_HOLD_S):
+        self.lock_steps = max(1, round(lock_after_s / step_dt))
+        self.still_steps = max(1, round(still_hold_s / step_dt))
+        self.lin_max, self.ang_max, self.height_max = still_lin_mps, still_ang_rad_s, still_max_height_m
+        self.locked = torch.zeros(n, dtype=torch.bool, device=device)
+        self.locked_by_timer = torch.zeros(n, dtype=torch.bool, device=device)
+        self.lock_step = torch.full((n,), -1, dtype=torch.long, device=device)
+        self.still_count = torch.zeros(n, dtype=torch.long, device=device)
+        self.lock_target = torch.zeros(n, action_dim, device=device)
+
+    def apply(self, actions, *, active, since, lin, ang, height, joint_pos_biased, offset, scale):
+        """active: [N] bool, under protective control; since: [N] steps since
+        the switch. Returns actions with locked envs holding their pose."""
+        inf = torch.full_like(height, float("inf"))
+        self.locked, self.lock_target, self.lock_step, self.locked_by_timer, self.still_count = lock_update(
+            locked=self.locked, lock_target=self.lock_target, lock_step=self.lock_step,
+            by_timer=self.locked_by_timer, still_count=self.still_count,
+            t=torch.where(active, since, torch.full_like(since, -1)),
+            lin=lin, ang=ang, height=torch.where(active, height, inf), joint_pos=joint_pos_biased,
+            lock_steps=self.lock_steps, still_steps=self.still_steps, lin_max=self.lin_max,
+            ang_max=self.ang_max, height_max=self.height_max,
+        )
+        hold = (self.lock_target - offset) / scale
+        return torch.where(self.locked.unsqueeze(-1), hold, actions)

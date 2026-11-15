@@ -225,3 +225,21 @@ def test_round3_notebook_labels():
     for name in ("sf", "r2s1", "r2s2", "ablhullgrow", "ablcentroid", "ablhull", "abltouched"):
         for label in (name, f"{name}_lock"):
             assert not re.fullmatch(r"(.+)_s(\d+)", label)
+
+
+def test_external_lock_clock_starts_at_the_switch_and_holds_via_the_action():
+    n = 2
+    lock = sl.ExternalSettleLock(n, 3, "cpu", STEP_DT, still_max_height_m=0.38, lock_after_s=0.1)  # 5 steps
+    offset, scale = torch.tensor([1.0, 1.0, 1.0]), torch.tensor([0.5, 0.5, 0.5])
+    flag_step = torch.tensor([10, -1])          # env 0 switches at step 10; env 1 never
+    out = None
+    for t in range(10, 16):
+        active = flag_step >= 0
+        pose = torch.full((n, 3), float(t))
+        out = lock.apply(torch.zeros(n, 3), active=active, since=t - flag_step, lin=torch.ones(n), ang=torch.ones(n),
+                         height=torch.ones(n), joint_pos_biased=pose, offset=offset, scale=scale)
+        assert bool(lock.locked[0]) == (t >= 15) and not lock.locked[1]
+    # held pose 15 written as an action: offset + scale * action == 15
+    assert torch.allclose(offset + scale * out[0], torch.full((3,), 15.0))
+    assert torch.allclose(out[1], torch.zeros(3))
+    assert lock.locked_by_timer[0]

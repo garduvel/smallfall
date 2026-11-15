@@ -54,7 +54,7 @@ METRICS = (
     ("peak_force_critical_n", "Trunk/hip peak force", "N", False),
     ("peak_force_any_n", "Any-body peak force", "N", False),
     ("peak_torque_nm", "Peak joint torque", "Nm", False),
-    ("steps", "Steps until at rest (capped at 150)", "steps", False),
+    ("steps", "Steps until at rest (capped at the episode budget)", "steps", False),
 )
 ARM_LABELS = {"protective": "Hand-off (protective)", "walker": "Walker continues", "limp": "Limp (motors off)"}
 # Categorical slots 1-3 of the reference palette (validated all-pairs for

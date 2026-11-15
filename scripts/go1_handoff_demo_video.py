@@ -67,19 +67,20 @@ from tensordict import TensorDict  # noqa: E402
 
 from cartpole_term.common.commands import force_forward_only_commands  # noqa: E402
 from cartpole_term.common.deferred_reset import DeferredResetEnv  # noqa: E402
-from cartpole_term.common.robot_profile import GO1  # noqa: E402
+from cartpole_term.common.robot_profile import get_profile  # noqa: E402
 from cartpole_term.protective.compare import EVENT_FLAG, HandoffTrials  # noqa: E402
 from cartpole_term.protective.env_cfg import (  # noqa: E402
     ANGULAR_SETTLED_THRESHOLD_RAD_S,
     LINEAR_SETTLED_THRESHOLD_MPS,
 )
 from go1_collect_flagged_states import STEP_SECONDS, _load_predictor  # noqa: E402
-from go1_handoff_eval import DOWN_HEIGHT_FRACTION, HOLD_STEPS, WINDOW_STEPS, make_env_cfg_factory  # noqa: E402
+from go1_handoff_eval import DOWN_HEIGHT_FRACTION, HOLD_STEPS, make_env_cfg_factory, window_steps  # noqa: E402
 from go1_protective_compare import CONTACT_SENSOR, _load_actor  # noqa: E402
 from go1_wild_push_predictor import DEFAULT_IMPULSE_FORCE_N, DEFAULT_IMPULSE_TORQUE_N  # noqa: E402
 from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
 
 ARMS = ("nominal", "limp", "handoff")  # left, middle, right
+CAP_S = 3.0  # the protective window, set per robot in main()
 TITLES = {
     "nominal": "Walker alone (predictor not wired)",
     "limp": "Limp: motors off when predictor fires",
@@ -139,8 +140,17 @@ def record_take(arm, raw, deferred, walker_actor, protective_actor, predictor, t
     motors_off, limp_peak_torque = False, 0.0
     robot = raw.scene["robot"]
     sensor = raw.scene[CONTACT_SENSOR]
-    critical = set(GO1.vulnerability_regions["high"])
+    critical = set(get_profile(args.robot).vulnerability_regions["high"])
     critical_mask = torch.tensor([name in critical for name in sensor.primary_names], device=device)
+    win = window_steps(args.robot)
+    lock = None
+    if args.settle_lock and arm == "handoff":
+        from cartpole_term.protective.settle_lock import (
+            STANDING_ROOT_HEIGHT_M, STILL_MAX_HEIGHT_FRACTION, ExternalSettleLock)
+
+        term = raw.action_manager.get_term("joint_pos")
+        lock = ExternalSettleLock(1, term.action_dim, device, STEP_SECONDS,
+                                  STILL_MAX_HEIGHT_FRACTION * STANDING_ROOT_HEIGHT_M[args.robot])
 
     def root_pose_local():
         return torch.cat([robot.data.root_link_pos_w - raw.scene.env_origins, robot.data.root_link_quat_w], dim=-1)
@@ -150,7 +160,7 @@ def record_take(arm, raw, deferred, walker_actor, protective_actor, predictor, t
     obs = TensorDict(obs_dict, batch_size=[1])
     raw.perturbations_off = torch.zeros(1, dtype=torch.bool, device=device)
     trials = HandoffTrials(
-        handoff=(arm != "nominal"), walk_steps=args.walk_steps, window_steps=WINDOW_STEPS,
+        handoff=(arm != "nominal"), walk_steps=args.walk_steps, window_steps=win,
         hold_steps=HOLD_STEPS, lin_threshold=LINEAR_SETTLED_THRESHOLD_MPS,
         ang_threshold=ANGULAR_SETTLED_THRESHOLD_RAD_S,
         root_xy=robot.data.root_link_pos_w[:, :2], body_xy=robot.data.body_link_pos_w[..., :2],
@@ -158,7 +168,7 @@ def record_take(arm, raw, deferred, walker_actor, protective_actor, predictor, t
     )
     frames, info = deque(maxlen=PRE_FLAG_KEEP), deque(maxlen=PRE_FLAG_KEEP)
     with torch.inference_mode():
-        for t in range(args.walk_steps + WINDOW_STEPS + 5):
+        for t in range(args.walk_steps + win + 5):
             walker_actions = walker_actor(obs, stochastic_output=True)
             prob = torch.sigmoid(predictor(torch.cat([obs["actor"], walker_actions], dim=-1)).squeeze(-1))
             latched = trials.pre_step(t, prob, threshold, robot.data.root_link_pos_w[:, :2],
@@ -166,6 +176,14 @@ def record_take(arm, raw, deferred, walker_actor, protective_actor, predictor, t
             actions = walker_actions
             if arm == "handoff" and latched.any():
                 actions = torch.where(latched.unsqueeze(-1), protective_actor(obs, stochastic_output=False), walker_actions)
+                if lock is not None:
+                    actions = lock.apply(
+                        actions, active=latched, since=t - trials.flag_step,
+                        lin=torch.norm(robot.data.root_link_lin_vel_w, dim=-1),
+                        ang=torch.norm(robot.data.root_link_ang_vel_w, dim=-1),
+                        height=robot.data.root_link_pos_w[:, 2] - raw.scene.env_origins[:, 2],
+                        joint_pos_biased=robot.data.joint_pos_biased[:, term.target_ids],
+                        offset=term.offset, scale=term.scale)
             elif arm == "limp" and latched.any() and not motors_off:
                 set_motor_gains(raw, 0.0)  # from this step on the action is irrelevant: zero torque
                 motors_off = True
@@ -234,7 +252,7 @@ def overlay(frame, arm, i, info, r, threshold):
 
     banner_steps = round(BANNER_S / STEP_SECONDS)
     if i == -1:  # final frozen frame: outcome of this panel
-        end = "came to rest" if r["settled"] else "still moving at the 3 s cap"
+        end = "came to rest" if r["settled"] else f"still moving at the {CAP_S:g} s cap"
         d.rectangle([0, h - 44, w, h], fill=(30, 30, 30))
         _draw_fitted(d, (10, h - 36), f"{end}; trunk peak force {r['peak_force_critical_n']:.0f} N, "
                      f"ground covered {r['envelope_growth_m']:.2f} m", (255, 255, 255), 16, w - 20)
@@ -281,13 +299,20 @@ def main() -> None:
     p.add_argument("--takes", type=int, default=3, help="falls to show")
     p.add_argument("--max-tries", type=int, default=30, help="rollout seeds to try before giving up")
     p.add_argument("--walk-steps", type=int, default=1000)
-    p.add_argument("--impulse-force", type=float, default=DEFAULT_IMPULSE_FORCE_N)
+    p.add_argument("--robot", choices=("go1", "g1"), default="go1")
+    p.add_argument("--settle-lock", action="store_true", help="the hand-off panel uses the settle lock")
+    p.add_argument("--impulse-force", type=float, default=None,
+                   help=f"default the robot's RobotProfile.impulse_force_n (Go1 {DEFAULT_IMPULSE_FORCE_N:g})")
     p.add_argument("--impulse-torque", type=float, default=DEFAULT_IMPULSE_TORQUE_N)
     p.add_argument("--camera-azimuth", type=float, default=90.0)
     p.add_argument("--camera-elevation", type=float, default=-20.0)
     p.add_argument("--camera-distance", type=float, default=None)
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
+    if args.impulse_force is None:
+        args.impulse_force = get_profile(args.robot).impulse_force_n
+    global CAP_S
+    CAP_S = window_steps(args.robot) * STEP_SECONDS
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required.")
@@ -307,6 +332,7 @@ def main() -> None:
     def video_factory(play: bool = False):
         cfg = base_factory(play=play)
         cfg.scene.num_envs = 1
+        cfg.sim.nconmax = 128  # one world: room for a fallen G1's contacts (see go1_watch_protective_episodes.py)
         # mjlab's default is 320x240 (ViewerConfig); the overlay text is laid out for 640x480.
         cfg.viewer.width, cfg.viewer.height = 640, 480
         cfg.viewer.azimuth = args.camera_azimuth
@@ -328,20 +354,20 @@ def main() -> None:
         )
         return cfg
 
-    from cartpole_term.go1.env_cfg import TASK_ID as GO1_TASK_ID
-    from cartpole_term.go1.runner import Go1FrozenEvalRunner
+    from cartpole_term.common.backend import get_robot_backend
     from cartpole_term.runner import build_runner_from_checkpoint
     from record_video import _sanity_check_renderer
 
     walker_runner = build_runner_from_checkpoint(
         args.walker_checkpoint, seed=args.seed, eval_num_envs=1, device=device,
-        runner_cls=Go1FrozenEvalRunner, env_cfg_factory=video_factory,
-        task_id=GO1_TASK_ID, extra_scalar_metric_fn=None,
+        runner_cls=get_robot_backend(args.robot).runner_cls, env_cfg_factory=video_factory,
+        task_id=get_robot_backend(args.robot).task_id, extra_scalar_metric_fn=None,
     )
     walker_runner.alg.eval_mode()
     walker_actor = walker_runner.alg.actor
     protective_actor = _load_actor(args.protective_checkpoint,
-                                   SimpleNamespace(state_bank_file=args.state_bank_file, seed=args.seed), device)
+                                   SimpleNamespace(state_bank_file=args.state_bank_file, seed=args.seed, robot=args.robot),
+                                   device)
     nets = {"walker": walker_actor, "protective": protective_actor, "predictor": predictor}
     snapshots = {k: {n: v.clone() for n, v in m.state_dict().items()} for k, m in nets.items()}
 
@@ -356,7 +382,7 @@ def main() -> None:
 
     out_dir = Path("outputs/videos")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"go1_handoff_demo_seed{args.seed}.mp4"
+    out = out_dir / f"{args.robot}_handoff_demo_seed{args.seed}.mp4"
     writer = imageio.get_writer(str(out), fps=round(1.0 / STEP_SECONDS))
     num_frames = 0
 

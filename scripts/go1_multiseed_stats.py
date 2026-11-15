@@ -62,6 +62,7 @@ def _load(path: Path, name: str):
     return mod
 
 
+ROBOT_LABEL = "Go1"  # set from --robot-label in main()
 rs = _load(_HERE / "go1_recovery_stats.py", "go1_recovery_stats")  # METRICS, colours, loaders, plot style
 
 ALPHA = 0.05  # on each run's own Holm-adjusted p-values
@@ -168,7 +169,7 @@ def _pfmt(x: float) -> str:
 def to_markdown(res: dict, pred: dict) -> str:
     seeds, arms = res["seeds"], res["arms"]
     k = len(seeds)
-    L = [f"# Go1 back half: {k} runs, results averaged at the end", "",
+    L = [f"# {ROBOT_LABEL} back half: {k} runs, results averaged at the end", "",
          f"Runs (seeds) {seeds}; falls per run: {list(res['n_falls_per_seed'].values())}. Same walker in every run.",
          "Every run did its own tests on its own falls. Each cell below is the mean \u00b1 standard deviation of that "
          f"statistic across the {k} runs. Lower is better for every measure.", "",
@@ -297,11 +298,14 @@ def main() -> None:
     p.add_argument("--compare-npz-template", required=True,
                    help='per-fall files for the box plots, a glob with {seed}, e.g. "outputs/go1_recovery_eval_seed{seed}_flag*.npz"')
     p.add_argument("--predictor-stats-template", default=None, help='e.g. "outputs/stats/predictor_seed{seed}/predictor_stats.json"')
+    p.add_argument("--robot-label", default="Go1", help="name used in the report title")
     p.add_argument("--handoff-json-template", default=None, help='e.g. "outputs/go1_handoff_eval_seed{seed}.json"')
     p.add_argument("--arms", nargs="+", default=["protective", "walker", "limp"])
     p.add_argument("--out-dir", required=True)
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
+    global ROBOT_LABEL
+    ROBOT_LABEL = args.robot_label
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

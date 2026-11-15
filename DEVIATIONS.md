@@ -5123,3 +5123,36 @@ bank 8, 501 falls.
   pre-specified arms on a bank unused before; not the pre-registered winner.
 - Round-3 retrained runs were no smaller than round 2's runs of the same
   reward (hullgrow 0.777-0.786 vs round 2's 0.720-0.790 on bank 7).
+
+## 2026-11-14 -- G1 end-to-end notebook
+
+User: the full notebook for the humanoid, copying the Go1 end-to-end
+notebook, running everything but with training x3 (three seeds instead of
+the Go1's five). `notebooks/g1_end_to_end.ipynb`, built by
+`tools/notebook_builders/build_g1_end_to_end_nb.py`. Same parts A-F, V, G.
+
+Differences from the Go1 notebook, and why:
+- **Walker:** reused from Drive (`walker2`) by default to save compute; set
+  `REUSE_WALKER_RUN = None` to train it here (10,000 iterations, logs on
+  Drive, resumes after a disconnect).
+- **Reward weights:** the G1 SmallFall weights (smallfall1) and the
+  fall-size weights (rewardablation1) are reused, so every seed uses the
+  recipe that rounds 2-3 tested; `REUSE_WEIGHTS_FROM = None` recalibrates
+  them on seed 0's training bank (the same two 11-iteration runs as before).
+- **Recipe:** hull-growth reward, 601 iterations, checkpoint 600 for every
+  seed (round 2's chosen run used 600); settle lock off in training, on at
+  run time (round 3's result).
+- **Bank seeds:** 1000 x (s + 1) + role, not 1000 x s + role, so no bank
+  repeats one used while developing the G1 recipe (seeds 3-8).
+- **Verdict per seed (E2):** ground covered below walker and limp, rest
+  >= 99%, trunk force <= walker's, any-body force < limp's (the G1 rounds'
+  safety rule, in place of the Go1's "trunk force and torque below the
+  walker").
+- Scripts given `--robot g1`: go1_handoff_eval.py (+ `--settle-lock`: the
+  lock's clock starts at the switch; the hold is written as an action,
+  (pose - offset) / scale, through the walker's JointPositionAction),
+  go1_handoff_demo_video.py (+ `--settle-lock`), go1_wildpush_video.py.
+  Push force defaults to the robot profile (Go1 150 N, G1 200 N); the Go1
+  defaults and file names are unchanged. Single-env videos get nconmax 128.
+- Not yet run on the GPU: the G1 hand-off, the G1 overlay and demo videos,
+  and the hand-off lock run for the first time in this notebook.
