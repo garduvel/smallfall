@@ -19,26 +19,36 @@ md("""
 
 The Go1 end-to-end notebook, for the G1: one walker, then everything after it
 once per seed in `SEEDS`: push dataset and fall predictor -> fall banks ->
-SmallFall policy -> live hand-off -> three-way comparison (hand-off, walker
-continues, limp) -> statistics. Every step is a `scripts/*.py` call.
+SmallFall policies -> live hand-off -> comparison against the walker and limp
+-> statistics. Every step is a `scripts/*.py` call.
+
+Each seed trains **four new SmallFall policies**, one per fall-size reward
+(hull growth, centroid travel, hull area, floor touched: the reward
+ablation's top four), plus **the original SmallFall** (ground-covered
+reward). Hull growth is the recipe's policy: it is the one handed control
+live (D), tested (E) and filmed (V). All seven (four new, original, walker,
+limp) are replayed on the same evaluation falls (F), compared with each
+other in box plots and paired tests.
 
 | Part | What it does | Runs | Rough A100 time |
 |---|---|---|---|
 | A | inspect the task; the walker (reused from Drive by default, or trained: 10,000 iterations) | once | ~2 min (reuse) / many hours (train) |
 | B | 200 N push dataset, predictor, its confidence intervals | per seed | ~15 min per seed |
-| C | reward weights (reused or calibrated, once); flag-moment training bank; SmallFall, 600 iterations | per seed | ~35 min per seed |
+| C | reward weights (reused or calibrated, once); flag-moment training bank; four new SmallFall policies (600 iterations each) and the original SmallFall (250) | per seed | ~2.3 h per seed |
 | D | live hand-off check (1,024 robots, two arms), settle lock on | per seed | ~8 min per seed |
 | E | fresh test bank, three-way replay, verdict | per seed | ~5 min per seed |
-| F | three more fresh banks per seed (about 1,500 falls) and that seed's significance tests; then mean and SD across seeds and the box plots | per seed, then once | ~15 min per seed |
+| F | three more fresh banks per seed (about 1,500 falls), all seven policies replayed on them; that seed's significance tests; then mean and SD across seeds and the box plots | per seed, then once | ~35 min per seed |
 | V | videos (walker, predictor overlay, SmallFall, three-panel demo) | first seed only | ~25 min |
 
-With three seeds and the walker reused: about 4.5 hours.
+With three seeds and the walker reused: about 10-11 hours.
 
-**The SmallFall recipe** (fixed by rounds 2 and 3, `DEVIATIONS.md`): the G1
-SmallFall reward with hull growth (floor area swept) as the fall-size term;
-600 iterations, checkpoint `model_600.pt`; trained without the settle lock,
-run with it (joints hold their pose 3 s after the hand-off, or once the robot
-is low and still).
+**The new SmallFall policies** (fixed by rounds 2 and 3, `DEVIATIONS.md`): the
+G1 SmallFall reward with one fall-size measure as its size term; 600
+iterations, checkpoint `model_600.pt`; trained without the settle lock, run
+with it (joints hold their pose 3 s after the fall starts or the hand-off, or
+once the robot is low and still). **The original SmallFall:** the
+ground-covered term, 250 iterations (the checkpoint chosen in the first G1
+run), no settle lock, as it was.
 
 **Seeds.** Seed `s` trains its own predictor and SmallFall and uses its own
 fall banks (bank seed = 1000 x (s + 1) + role: 5 trains, 4 tests, 6-8
@@ -87,8 +97,16 @@ RUN_NAME = "e2e1"                 # results folder on Drive; use a new name for 
 SEEDS = (0, 1, 2)                 # one full back half per seed
 REUSE_WALKER_RUN = "walker2"      # g1_walker/<run> on Drive; None = train the walker here (many hours)
 REUSE_WEIGHTS_FROM = {"protective": "g1_smallfall/smallfall1", "fall_size": "g1_reward_ablation/rewardablation1"}  # None = calibrate
-SIZE_MEASURE = "hull_growth_m2"   # the fall-size reward term (round 2/3 result)
-PROTECTIVE_ITERATION = 600        # fixed for every seed
+REWARDS = {                       # new SmallFall policies: label -> fall-size measure (first = the recipe's policy)
+    "hullgrow": "hull_growth_m2",
+    "centroid": "centroid_travel_end_m",
+    "hull": "swept_hull_area_m2",
+    "touched": "touched_area_m2",
+}
+LABELS = {"hullgrow": "Hull growth", "centroid": "Centroid travel", "hull": "Hull area", "touched": "Floor touched"}
+SIZE_MEASURE = REWARDS["hullgrow"]
+PROTECTIVE_ITERATION = 600        # fixed for every seed and every new policy
+SF_ITERATION = 250                # the original SmallFall: checkpoint chosen in the first G1 run (smallfall1)
 PROTECTIVE_TRAIN_ITERATIONS = PROTECTIVE_ITERATION + 1   # iterations are numbered from 0
 WALKER_ITERATIONS = 10_000
 VIDEO_SEED = SEEDS[0]
@@ -106,11 +124,14 @@ def dataset(s): return f"outputs/g1_wildpush_frozen_seed{s}.npz"
 def predictor_stats(s): return f"outputs/stats/predictor_seed{s}/predictor_stats.json"
 def bank_seed(s, role): return 1000 * (s + 1) + role
 def flag_bank(s, role): return f"outputs/g1_flag_state_bank_seed{bank_seed(s, role)}.npz"
-def protective(s): return f"checkpoints/protective/g1_seed{s}_hullgrow_model_{PROTECTIVE_ITERATION}.pt"
+def policy(s, r): return f"checkpoints/protective/g1_seed{s}_{r}_model_{PROTECTIVE_ITERATION}.pt"
+def policy_history(s, r): return f"outputs/g1_protective_eval_history_seed{s}.json" if r == "hullgrow" else f"outputs/g1_{r}_eval_history_seed{s}.json"
+def protective(s): return policy(s, "hullgrow")   # the recipe's policy
+def original_sf(s): return f"checkpoints/protective/g1_seed{s}_original_model_{SF_ITERATION}.pt"
 def recovery_stats(s): return f"outputs/stats/recovery_seed{s}/recovery_stats.json"
 def handoff(s): return f"outputs/g1_handoff_eval_seed{s}.json"
 def test_compare(s): return f"outputs/g1_protective_compare_test_seed{s}.json"
-def eval_compare(s, role): return f"outputs/g1_recovery_eval_seed{s}_flag{role}.json"
+def eval_compare(s, role): return f"outputs/g1_policies_eval_seed{s}_flag{role}.json"   # all seven policies
 def npz(path): return path.replace(".json", ".npz")
 
 from google.colab import drive, files
@@ -270,23 +291,40 @@ else:
 print("hull-growth weight:", json.load(open(SIZE_WEIGHTS))["weights"][SIZE_MEASURE])
 """)
 
-md("## C3. Train SmallFall, each seed to iteration 600 (settle lock off in training)")
+md("## C3. Train the four new SmallFall policies, each seed to iteration 600 (settle lock off in training)")
 code("""
 for s in SEEDS:
-    history = f"outputs/g1_protective_eval_history_seed{s}.json"
-    if restore(protective(s), history):
-        print(f"seed {s}: SmallFall already trained, skipping")
+    for r, measure in REWARDS.items():
+        if restore(policy(s, r), policy_history(s, r)):
+            print(f"seed {s}, {r}: already trained, skipping")
+            continue
+        print(f"\\n==================== seed {s}: SmallFall, {LABELS[r]} reward ====================")
+        t0 = time.time()
+        bank = flag_bank(s, TRAIN_ROLE)
+        !python scripts/go1_train_protective.py --robot g1 --seeds {s} --state-bank-file {bank} --weights-json {WEIGHTS} --fall-size-weights-json {SIZE_WEIGHTS} --fall-size-measure {measure} --run-tag e2e_{r} --max-iterations {PROTECTIVE_TRAIN_ITERATIONS}
+        assert _exit_code == 0, f"seed {s}, {r}: training failed (exit {_exit_code}) -- scroll up"
+        run = sorted(glob.glob(f"logs/rsl_rl/g1_protective_fall/*_e2e_{r}_seed{s}"))[-1]
+        shutil.copy(f"{run}/model_{PROTECTIVE_ITERATION}.pt", policy(s, r))
+        shutil.copy(f"{run}/eval_history.json", policy_history(s, r))
+        save(policy(s, r), policy_history(s, r))
+        print(f"seed {s}, {r}: trained in {(time.time() - t0) / 60:.0f} min")
+""")
+
+md("## C4. Train the original SmallFall (ground-covered reward), each seed to iteration 250")
+code("""
+for s in SEEDS:
+    history = f"outputs/g1_original_eval_history_seed{s}.json"
+    if restore(original_sf(s), history):
+        print(f"seed {s}: original SmallFall already trained, skipping")
         continue
-    print(f"\\n==================== seed {s}: SmallFall training ====================")
-    t0 = time.time()
+    print(f"\\n==================== seed {s}: original SmallFall ====================")
     bank = flag_bank(s, TRAIN_ROLE)
-    !python scripts/go1_train_protective.py --robot g1 --seeds {s} --state-bank-file {bank} --weights-json {WEIGHTS} --fall-size-weights-json {SIZE_WEIGHTS} --fall-size-measure {SIZE_MEASURE} --run-tag e2e_hullgrow --max-iterations {PROTECTIVE_TRAIN_ITERATIONS}
-    assert _exit_code == 0, f"seed {s}: SmallFall training failed (exit {_exit_code}) -- scroll up"
-    run = sorted(glob.glob(f"logs/rsl_rl/g1_protective_fall/*_e2e_hullgrow_seed{s}"))[-1]
-    shutil.copy(f"{run}/model_{PROTECTIVE_ITERATION}.pt", protective(s))
+    !python scripts/go1_train_protective.py --robot g1 --seeds {s} --state-bank-file {bank} --weights-json {WEIGHTS} --run-tag e2e_original --max-iterations {SF_ITERATION + 1}
+    assert _exit_code == 0, f"seed {s}: original SmallFall training failed (exit {_exit_code}) -- scroll up"
+    run = sorted(glob.glob(f"logs/rsl_rl/g1_protective_fall/*_e2e_original_seed{s}"))[-1]
+    shutil.copy(f"{run}/model_{SF_ITERATION}.pt", original_sf(s))
     shutil.copy(f"{run}/eval_history.json", history)
-    save(protective(s), history)
-    print(f"seed {s}: trained in {(time.time() - t0) / 60:.0f} min")
+    save(original_sf(s), history)
 """)
 
 md("# Part D: live hand-off check (per seed)")
@@ -346,7 +384,13 @@ for s in SEEDS:
 """)
 
 md("# Part F: statistical evaluation")
-md("## F1. Per seed: three more fresh banks (about 1,500 paired falls), then that seed's own significance tests")
+md("""
+## F1. Per seed: three more fresh banks (about 1,500 paired falls), all seven policies on every fall
+`protective` = hull growth; `centroid`, `hull`, `touched` = the other new
+policies (all four with the settle lock); `original` = the original
+SmallFall (no lock); walker; limp. Then that seed's own significance tests
+for the recipe's policy against walker and limp.
+""")
 code("""
 for s in SEEDS:
     for role in EVAL_ROLES:
@@ -358,7 +402,9 @@ for s in SEEDS:
         pr, p, m, bs, bank = protective(s), predictor(s), metrics(s), bank_seed(s, role), flag_bank(s, role)
         !python scripts/go1_collect_flagged_states.py --robot g1 --checkpoint-file {WALKER} --predictor-file {p} --metrics-file {m} --seed {bs} --capture-state-bank --capture-at-flag
         assert _exit_code == 0, f"seed {s}: evaluation bank {role} failed (exit {_exit_code}) -- scroll up"
-        !python scripts/go1_protective_compare.py --robot g1 --protective-checkpoint {pr} --walker-checkpoint {WALKER} --state-bank-file {bank} --seed {bs} --output {out} --locked-arms protective
+        extra = " ".join(f"--extra-policy {r}={policy(s, r)}" for r in REWARDS if r != "hullgrow") + f" --extra-policy original={original_sf(s)}"
+        locked = ",".join(["protective"] + [r for r in REWARDS if r != "hullgrow"])
+        !python scripts/go1_protective_compare.py --robot g1 --protective-checkpoint {pr} --walker-checkpoint {WALKER} --state-bank-file {bank} --seed {bs} --output {out} {extra} --locked-arms {locked}
         assert _exit_code == 0, f"seed {s}: compare failed (exit {_exit_code}) -- scroll up"
         save(out, npz(out))
     stats_json = recovery_stats(s)
@@ -381,7 +427,7 @@ code("""
 # subprocess, not "!": the templates contain a literal {seed} the script fills in.
 stats_cmd = ["python", "scripts/go1_multiseed_stats.py", "--seeds", *[str(s) for s in SEEDS],
              "--recovery-stats-template", "outputs/stats/recovery_seed{seed}/recovery_stats.json",
-             "--compare-npz-template", "outputs/g1_recovery_eval_seed{seed}_flag*.npz",
+             "--compare-npz-template", "outputs/g1_policies_eval_seed{seed}_flag*.npz",
              "--predictor-stats-template", "outputs/stats/predictor_seed{seed}/predictor_stats.json",
              "--handoff-json-template", "outputs/g1_handoff_eval_seed{seed}.json",
              "--robot-label", "G1", "--out-dir", "outputs/stats/multiseed", "--quiet"]
@@ -392,6 +438,30 @@ BOXPLOTS = "outputs/stats/multiseed/fig_boxplots.png"
 save("outputs/stats/multiseed/multiseed_stats.json", "outputs/stats/multiseed/multiseed_stats.md", BOXPLOTS)
 display(Image(BOXPLOTS))
 files.download(BOXPLOTS)
+""")
+
+md("""
+## F3. All seven policies against each other (displayed, saved to Drive, downloaded)
+Boxes: every fall from every seed. Each seed's tests are paired on its own
+falls (Wilcoxon, Holm within the seed): every new policy against the
+original SmallFall and against limp, and the four new policies against each
+other. Tables: `outputs/stats/policies/policy_stats.md`.
+""")
+code("""
+arm_args = [f"--arm=protective={LABELS['hullgrow']}"] + [f"--arm={r}={LABELS[r]}" for r in REWARDS if r != "hullgrow"] \\
+    + ["--arm=original=Original SmallFall", "--arm=walker=Walker", "--arm=limp=Limp"]
+cmd = ["python", "scripts/robot_policy_boxplots.py", "--runs", "outputs/g1_policies_eval_seed{seed}_flag*.npz",
+       "--seeds", *[str(s) for s in SEEDS], *arm_args,
+       "--new", "protective", *[r for r in REWARDS if r != "hullgrow"], "--reference", "original",
+       "--title", "G1: four new SmallFall policies (settle lock on) vs the original SmallFall, walker and limp",
+       "--out-dir", "outputs/stats/policies"]
+done = subprocess.run(cmd, capture_output=True, text=True)
+print(done.stdout[-3000:], done.stderr[-6000:])
+assert done.returncode == 0, f"policy box plots failed (exit {done.returncode}) -- see the output above"
+POLICY_PLOTS = "outputs/stats/policies/fig_policy_boxplots.png"
+save("outputs/stats/policies/policy_stats.json", "outputs/stats/policies/policy_stats.md", POLICY_PLOTS)
+display(Image(POLICY_PLOTS))
+files.download(POLICY_PLOTS)
 """)
 
 md("# Part V: videos (first seed only)")

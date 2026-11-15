@@ -5187,3 +5187,29 @@ iterations, settle lock at run time. Fresh banks (seeds 1004-3008).
 - Demo video: three takes, flag steps matched in all three; hand-off ground
   covered 0.56 / 0.29 / 1.09 m vs walker 1.64 / 2.07 / 2.36, limp 0.94 /
   0.73 / 1.61.
+
+## 2026-11-15 -- Seven-policy box plots; end-to-end notebook trains all four new rewards
+
+User: the box plots should show the four new SmallFall policies against each
+other, then the original SmallFall and the baselines; the whole notebook
+should look like that (not run now).
+
+- `scripts/robot_policy_boxplots.py` (new, CPU): any set of arms replayed on
+  the same falls; four panels (ground covered, trunk force, any-body force,
+  time to rest); per run, paired Wilcoxon of every new policy vs the
+  original SmallFall and vs limp, and between every two new policies, Holm
+  within the run per measure; across runs, mean +- SD and runs significant.
+  Palette checked with the dataviz validator (adjacent pairs, light).
+- Made now from existing data (round 3 test, bank 8, 504 falls, one run):
+  `outputs/stats/policies_round3_bank8/` with the four reward-ablation
+  policies + lock, the original SmallFall (no lock), walker, limp. Ground
+  covered: centroid 0.655, hull growth 0.705, original 0.709, hull area
+  0.718, floor touched 0.735 m; hull area and floor touched significantly
+  larger than the original, hull growth and centroid not different. One
+  training run per policy and one bank, so this is descriptive.
+- `notebooks/g1_end_to_end.ipynb` now trains per seed the four new policies
+  (600 iterations, lock at run time) and the original SmallFall
+  (ground-covered reward, iteration 250 = smallfall1's chosen checkpoint, no
+  lock), replays all seven on the three evaluation banks per seed
+  (g1_policies_eval_*), and adds F3 (these box plots over the seeds). Hull
+  growth stays the recipe's policy for D, E, V. About 10-11 h; not run.
