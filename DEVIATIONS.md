@@ -5091,3 +5091,35 @@ smaller than the original SmallFall (size score ratio < 1, paired Wilcoxon
 p < 0.05) and than limp; ground covered below limp's and the walker's; size
 score <= 1.05x round 2's hullgrow_s2 (no lock) on the same falls. Reported
 whatever it is, with the share of falls that needed the lock.
+
+## 2026-11-14 -- G1 round 3 results (settle lock)
+
+Results: `outputs/g1_round3/`, zip in `archive/g1_round3_round3.zip`. Test
+bank 8, 501 falls.
+
+- **Pre-registered verdict: PASS.** Chosen (on bank 3): reward touched,
+  policy touched_s0. On bank 8: rest 100%, size score 0.728 (original
+  SmallFall 0.912, ratio 0.80, p ~ 0); 1.02x round 2's hullgrow_s2 (p = 0.6,
+  within the 1.05 margin); safe (trunk 0 N, any-body 1,606 N vs limp 2,570).
+- **The lock fires in 100% of locked falls, almost always by the
+  low-and-still trigger.** That trigger (0.3 s below 0.3 m/s, 0.75 rad/s) is
+  looser and shorter than `settled` (0.5 s below 0.2 m/s, 0.5 rad/s), so it
+  precedes natural rest by design. "Lock used" therefore means little; the
+  timer share is the informative number: 0.2-5% for existing policies with
+  the lock added, but 17-58% for policies trained with it (hullgrow 51-58%,
+  hull 17-39%, centroid 30%, touched 5-19%). Training with the lock removed
+  the pressure to settle on their own.
+- **Adding the lock without retraining works best.** Every existing policy
+  reached 99.8-100% rest; size changed by x0.97-1.01; forces unchanged.
+  Ablation centroid: 63% -> 100% rest. Round 2's hullgrow_s2 + lock
+  (`r2s2_lock`): size score 0.704, the smallest arm on the bank; ground
+  covered 0.550 m (touched_s0 0.654 m, p ~ 0; original SmallFall 0.709 m);
+  any-body force 1,320 N (touched_s0 1,606 N); rest 100%.
+- touched_s0 passes on the combined size score but covers 19% more ground
+  than r2s2_lock and has 22% more any-body force: the floor-touched reward
+  trades ground covered for touched area. Since less ground covered is the
+  main goal (CLAUDE.md), the recommended policy is **hullgrow_s2 (round 2)
+  with the settle lock added at run time**. This is a post-hoc pick among
+  pre-specified arms on a bank unused before; not the pre-registered winner.
+- Round-3 retrained runs were no smaller than round 2's runs of the same
+  reward (hullgrow 0.777-0.786 vs round 2's 0.720-0.790 on bank 7).
