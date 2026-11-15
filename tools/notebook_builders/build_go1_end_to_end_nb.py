@@ -46,7 +46,10 @@ compared with each other in box plots and paired tests.
 | F | three more fresh banks per seed (about 1,500 falls), all seven policies replayed on them; that seed's significance tests; then mean and SD across seeds and the box plots | per seed, then once | ~25 min per seed |
 | V | videos (walker, predictor overlay, SmallFall, three-panel demo) | first seed only | ~20 min |
 
-With three seeds and the walker reused: about 6-7 hours.
+Runs **seed 0 only by default** (about 2.5 hours with the walker reused). To
+add seeds 1-2, set `SEEDS = (0, 1, 2)` in step 0c, keep the same `RUN_NAME`
+and run all again: seed 0's finished steps are restored from Drive and
+skipped, and the box plots are redrawn over all three (about 4 more hours).
 
 **The new SmallFall policies:** the Go1 round-8 SmallFall reward with its
 ground-covered term replaced by one fall-size measure, sized on this robot
@@ -102,7 +105,7 @@ made them yet).
 """)
 code("""
 RUN_NAME = "e2e1"                 # results folder on Drive; use a new name for a fresh run
-SEEDS = (0, 1, 2)                 # one full back half per seed
+SEEDS = (0,)                      # seed 0 first (~2.5 h); then (0, 1, 2) with the same RUN_NAME runs only seeds 1-2
 REUSE_WALKER_RUN = "multiseed1"   # go1_end_to_end/<run> on Drive; None = train the walker here (several hours)
 REUSE_SIZE_WEIGHTS_FROM = None    # e.g. "go1_end_to_end/e2e1"; None = calibrate in C2
 REWARDS = {                       # new SmallFall policies: label -> fall-size measure (first = the recipe's policy)

@@ -5247,3 +5247,5 @@ mirror the G1 notebook structurally. Not run.
   cap, and the same 60% of the cap. The low-and-still trigger uses half the
   Go1's standing height (0.139 m).
 - About 6-7 h on an A100 with the walker reused.
+- Default `SEEDS = (0,)` (user, 2026-11-15): seed 0 first as a check of the
+  untested Go1 choices; seeds 1-2 added later with the same RUN_NAME.
