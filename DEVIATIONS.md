@@ -5249,3 +5249,30 @@ mirror the G1 notebook structurally. Not run.
 - About 6-7 h on an A100 with the walker reused.
 - Default `SEEDS = (0,)` (user, 2026-11-15): seed 0 first as a check of the
   untested Go1 choices; seeds 1-2 added later with the same RUN_NAME.
+
+## 2026-11-15 -- Go1 end-to-end e2e1, seed 0: results
+
+`go1_end_to_end.ipynb`, `SEEDS = (0,)`, walker from `multiseed1`. Unpacked
+under `outputs/go1_end_to_end/`, zip in `archive/go1_end_to_end_e2e1.zip`.
+One training run per policy, so this is a first look, not a seed-level result.
+
+- C2 fall-size weights (none clamped): hull growth -36.1, centroid -25.8,
+  hull area -28.3, floor touched -127.8 (ground covered -30).
+- Predictor: test AUPRC 0.859; live recall 1.00, precision 0.868, median
+  warning 15 steps (0.30 s). Gate 6 PASS; Gate 7 pairing 32% (not
+  evaluable, as before).
+- E2 test (hull growth + lock, bank 4): ground covered 0.307 m vs walker
+  0.929, limp 0.498; trunk 0 N; torque 23.7 vs walker 35.6 Nm; settled 100%:
+  PASS. Lock fired in 62% of falls, by the 1.8 s timer in 20%.
+- F (banks 6-8, 1,507 falls, all seven arms), median ground covered: hull
+  area 0.311, hull growth 0.312, centroid 0.340, original SmallFall 0.376,
+  floor touched 0.395, limp 0.482, walker 0.904 m. Hull growth, hull area
+  and centroid are significantly below the original (Holm p < 1e-12; hull
+  growth lower in 62% of falls, -0.035 m); floor touched is above it. Hull
+  growth vs hull area: no difference (p 0.36).
+- Any-body force: hull growth 810, hull area 799, centroid 710 N, all below
+  the original (1,068) and limp (1,154); floor touched 1,028 (not
+  different). Trunk force 0 N median for all five SmallFall policies.
+- Time to rest: hull growth 1.64, centroid 1.76, hull area 1.88 s, slower
+  than the original (1.44 s); floor touched 1.42 (same). Came to rest
+  99.3-99.9% for the new four vs 98.2% for the original.
