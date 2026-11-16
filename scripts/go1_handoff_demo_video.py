@@ -309,7 +309,15 @@ def main() -> None:
     p.add_argument("--camera-elevation", type=float, default=-20.0)
     p.add_argument("--camera-distance", type=float, default=None)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--policy-label", default="",
+                   help="names the policy that takes over in the right panel, e.g. 'SmallFall: hull growth'")
+    p.add_argument("--policy-tag", default="", help="added to the output file name, e.g. hullgrow")
     args = p.parse_args()
+    if args.policy_label:
+        TITLES["handoff"] = f"Hand-off to {args.policy_label}"
+        AFTER_FLAG["handoff"] = (f"IN CONTROL: {args.policy_label}",) + AFTER_FLAG["handoff"][1:]
+    if args.settle_lock:
+        TITLES["handoff"] += " (settle lock)"
     if args.impulse_force is None:
         args.impulse_force = get_profile(args.robot).impulse_force_n
     global CAP_S
@@ -383,7 +391,9 @@ def main() -> None:
 
     out_dir = Path("outputs/videos")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{args.robot}_handoff_demo_seed{args.seed}.mp4"
+    from cartpole_term.common.video_caption import file_tag
+
+    out = out_dir / f"{args.robot}_handoff_demo{file_tag(args.policy_tag)}_seed{args.seed}.mp4"
     writer = imageio.get_writer(str(out), fps=round(1.0 / STEP_SECONDS))
     num_frames = 0
 

@@ -149,7 +149,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
     _sanity_check_renderer(raw_env, args.seed)
 
     obs, _ = raw_env.reset(seed=args.seed)
-    frames: list[np.ndarray] = []
+    frames: list[tuple[np.ndarray, int]] = []  # (frame, episode number)
 
     episode_count = 0
     episode_step = 0
@@ -160,7 +160,7 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
     max_total_steps = args.episodes * MAX_TOTAL_STEPS_PER_EPISODE_BUDGET
     with torch.inference_mode():
         while episode_count < args.episodes and step_idx < max_total_steps:
-            frames.append(raw_env.render())
+            frames.append((raw_env.render(), episode_count + 1))
 
             actions = runner.alg.actor(obs, stochastic_output=args.stochastic)
             obs, reward, terminated, truncated, _info = raw_env.step(actions.to(raw_env.device))
@@ -219,11 +219,15 @@ def record_protective_episodes(args: argparse.Namespace, device: str) -> None:
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    final_path = outputs_dir / f"{args.robot}_protective_watch_seed{args.seed}_ep{args.episodes}.mp4"
+    from cartpole_term.common.video_caption import caption_frame, file_tag
+
+    final_path = outputs_dir / f"{args.robot}_protective_watch{file_tag(args.policy_tag)}_seed{args.seed}_ep{args.episodes}.mp4"
     fps = round(1.0 / STEP_SECONDS)
+    title = args.policy_label or f"Protective policy: {Path(args.checkpoint_file).name}"
+    title += " | settle lock on" if args.settle_lock else ""
     writer = imageio.get_writer(str(final_path), fps=fps)
-    for frame in frames:
-        writer.append_data(frame)
+    for frame, ep in frames:
+        writer.append_data(caption_frame(frame, title, f"fall {min(ep, args.episodes)}/{args.episodes}"))
     writer.close()
 
     size_mb = final_path.stat().st_size / 1e6
@@ -253,6 +257,10 @@ def main() -> None:
     )
     parser.add_argument("--settle-lock", action="store_true",
                         help="record with the settle lock on (protective/settle_lock.py)")
+    parser.add_argument("--policy-label", default="",
+                        help="caption shown on every frame, e.g. 'SmallFall: hull-growth reward' "
+                        "(default: the checkpoint's file name)")
+    parser.add_argument("--policy-tag", default="", help="added to the output file name, e.g. hullgrow")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():

@@ -5276,3 +5276,23 @@ One training run per policy, so this is a first look, not a seed-level result.
 - Time to rest: hull growth 1.64, centroid 1.76, hull area 1.88 s, slower
   than the original (1.44 s); floor touched 1.42 (same). Came to rest
   99.3-99.9% for the new four vs 98.2% for the original.
+
+## 2026-11-15 -- Videos name the policy on screen
+
+User: "in the videos specify which recovery policy I'm watching". A second
+e2e1 zip arrived first: the same seed-0 run re-run (`SEEDS` still `(0,)`),
+every result file identical; archived as `archive/go1_end_to_end_e2e1_rerun.zip`.
+
+- `src/cartpole_term/common/video_caption.py` (new, numpy + Pillow): a black
+  caption bar on every frame; frames under 640 px wide are upscaled.
+- `go1_watch_protective_episodes.py`: `--policy-label` (caption, default the
+  checkpoint's file name; "| settle lock on" added when it is), a "fall k/N"
+  counter, `--policy-tag` in the file name.
+- `go1_handoff_demo_video.py`: `--policy-label` names the policy in the
+  hand-off panel's title and its "IN CONTROL" line, "(settle lock)" added
+  when on; `--policy-tag` in the file name.
+- Both end-to-end notebooks: V3 now films all five SmallFall policies (the
+  four new ones with the lock, the original without, as in F) on the same
+  eight test-bank falls, one captioned video each; V4's hand-off panel
+  names the hull-growth SmallFall. The new file names mean a re-run with the
+  same RUN_NAME renders only these videos; everything else is restored.

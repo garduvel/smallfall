@@ -38,7 +38,7 @@ other in box plots and paired tests.
 | D | live hand-off check (1,024 robots, two arms), settle lock on | per seed | ~8 min per seed |
 | E | fresh test bank, three-way replay, verdict | per seed | ~5 min per seed |
 | F | three more fresh banks per seed (about 1,500 falls), all seven policies replayed on them; that seed's significance tests; then mean and SD across seeds and the box plots | per seed, then once | ~35 min per seed |
-| V | videos (walker, predictor overlay, SmallFall, three-panel demo) | first seed only | ~25 min |
+| V | videos (walker, predictor overlay, each of the five SmallFall policies captioned by name, three-panel demo) | first seed only | ~40 min |
 
 With three seeds and the walker reused: about 10-11 hours.
 
@@ -484,21 +484,32 @@ if not restore(V2):
     save(V2)
 display(Video(V2, embed=True, width=640))
 """)
-md("## V3. SmallFall on eight falls (settle lock on)")
-code("""
-vpr, vbank = protective(VIDEO_SEED), flag_bank(VIDEO_SEED, TEST_ROLE)
-V3 = f"outputs/g1_protective_watch_seed{VIDEO_SEED}_ep8.mp4"
-if not restore(V3):
-    !python scripts/go1_watch_protective_episodes.py --robot g1 --settle-lock --checkpoint-file {vpr} --state-bank-file {vbank} --episodes 8 --camera-distance 3.5 --seed {VIDEO_SEED}
-    assert _exit_code == 0, f"script failed (exit {_exit_code}) -- scroll up"
-    save(V3)
-display(Video(V3, embed=True, width=640))
+md("""
+## V3. Each SmallFall policy on the same eight falls, one captioned video per policy
+The caption names the policy on screen. The four new policies run with the
+settle lock, the original SmallFall without it (as evaluated in F).
 """)
-md("## V4. Demo: the same fall three ways (walker alone | limp | hand-off with the settle lock)")
 code("""
-DEMO = f"outputs/videos/g1_handoff_demo_seed{VIDEO_SEED}.mp4"
+vbank = flag_bank(VIDEO_SEED, TEST_ROLE)
+V3 = {}
+for r, path, lock in [(r, policy(VIDEO_SEED, r), True) for r in REWARDS] + [("original", original_sf(VIDEO_SEED), False)]:
+    label = "SmallFall: " + (f"{LABELS[r]} reward" if r in REWARDS else "original (ground-covered reward)")
+    V3[r] = f"outputs/g1_protective_watch_{r}_seed{VIDEO_SEED}_ep8.mp4"
+    if not restore(V3[r]):
+        lock_flag = "--settle-lock" if lock else ""
+        !python scripts/go1_watch_protective_episodes.py --robot g1 {lock_flag} --checkpoint-file {path} --state-bank-file {vbank} --episodes 8 --camera-distance 3.5 --seed {VIDEO_SEED} --policy-label "{label}" --policy-tag {r}
+        assert _exit_code == 0, f"{r}: script failed (exit {_exit_code}) -- scroll up"
+        save(V3[r])
+for r, path in V3.items():
+    print(r)
+    display(Video(path, embed=True, width=640))
+""")
+md("## V4. Demo: the same fall three ways (walker alone | limp | hand-off to the hull-growth SmallFall with the settle lock)")
+code("""
+vpr = protective(VIDEO_SEED)
+DEMO = f"outputs/videos/g1_handoff_demo_hullgrow_seed{VIDEO_SEED}.mp4"
 if not restore(DEMO, DEMO.replace(".mp4", ".json")):
-    !python scripts/go1_handoff_demo_video.py --robot g1 --settle-lock --protective-checkpoint {vpr} --walker-checkpoint {WALKER} --predictor-file {vp} --metrics-file {vm} --state-bank-file {vbank} --camera-distance 3.5 --seed {VIDEO_SEED}
+    !python scripts/go1_handoff_demo_video.py --robot g1 --settle-lock --protective-checkpoint {vpr} --walker-checkpoint {WALKER} --predictor-file {vp} --metrics-file {vm} --state-bank-file {vbank} --camera-distance 3.5 --seed {VIDEO_SEED} --policy-label "SmallFall ({LABELS['hullgrow']})" --policy-tag hullgrow
     assert _exit_code == 0, f"video failed (exit {_exit_code}) -- scroll up for the traceback"
     save(DEMO, DEMO.replace(".mp4", ".json"))
 display(Video(DEMO, embed=True, width=1280))
