@@ -5296,3 +5296,15 @@ every result file identical; archived as `archive/go1_end_to_end_e2e1_rerun.zip`
   eight test-bank falls, one captioned video each; V4's hand-off panel
   names the hull-growth SmallFall. The new file names mean a re-run with the
   same RUN_NAME renders only these videos; everything else is restored.
+
+## 2026-11-20 -- End-to-end notebooks: missing flag-moment banks are re-collected (fix)
+
+Colab, Go1 `e2e1` resumed with `SEEDS = (0, 1, 2, 3, 4)`: V3 failed with
+`FileNotFoundError: outputs/go1_flag_state_bank_seed4.npz`. Seed 0's test
+(E1) was restored from Drive and skipped, but E1/F1 never saved their
+flag-moment banks to Drive, so the bank the videos replay (seed 0, test role
+4) did not exist in the new session. The G1 notebook had the same gap.
+Fix (both builders): an `ensure_bank(s, role)` helper restores a bank from
+Drive or collects it again from its fixed bank seed and saves it; E1, F1 and
+the video part use it. Results are unchanged (the videos only replay the
+bank; the test bank is still evaluated once, in E1).

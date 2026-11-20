@@ -157,6 +157,19 @@ def restore(*paths):
             shutil.copy(on_drive(p), p)
     return True
 
+def ensure_bank(s, role):
+    # A flag-moment bank, from Drive if saved there, else collected again from
+    # its fixed seed (and saved), so a resumed run that skips the test still
+    # has the bank the videos replay.
+    bank, bs = flag_bank(s, role), bank_seed(s, role)
+    if restore(bank):
+        return bank
+    p, m = predictor(s), metrics(s)
+    !python scripts/go1_collect_flagged_states.py --robot g1 --checkpoint-file {WALKER} --predictor-file {p} --metrics-file {m} --seed {bs} --capture-state-bank --capture-at-flag
+    assert _exit_code == 0, f"seed {s}: bank {role} failed (exit {_exit_code}) -- scroll up"
+    save(bank)
+    return bank
+
 versions = {"gpu": torch.cuda.get_device_name(0), "commit": COMMIT, "seeds": list(SEEDS),
             "reuse_walker_run": REUSE_WALKER_RUN, "reuse_weights_from": REUSE_WEIGHTS_FROM}
 for pkg in ("mjlab", "mujoco-warp", "rsl-rl-lib", "torch", "numpy"):
@@ -354,9 +367,7 @@ for s in SEEDS:
         print(f"seed {s}: test already done, skipping")
         continue
     print(f"\\n==================== seed {s}: test ====================")
-    pr, p, m, bs, bank = protective(s), predictor(s), metrics(s), bank_seed(s, TEST_ROLE), flag_bank(s, TEST_ROLE)
-    !python scripts/go1_collect_flagged_states.py --robot g1 --checkpoint-file {WALKER} --predictor-file {p} --metrics-file {m} --seed {bs} --capture-state-bank --capture-at-flag
-    assert _exit_code == 0, f"seed {s}: test bank failed (exit {_exit_code}) -- scroll up"
+    pr, bs, bank = protective(s), bank_seed(s, TEST_ROLE), ensure_bank(s, TEST_ROLE)
     !python scripts/go1_protective_compare.py --robot g1 --protective-checkpoint {pr} --walker-checkpoint {WALKER} --state-bank-file {bank} --seed {bs} --output {out} --locked-arms protective
     assert _exit_code == 0, f"seed {s}: compare failed (exit {_exit_code}) -- scroll up"
     save(out, npz(out))
@@ -399,9 +410,7 @@ for s in SEEDS:
             print(f"seed {s}, bank {role}: already done, skipping")
             continue
         print(f"\\n==================== seed {s}: evaluation bank {role} ====================")
-        pr, p, m, bs, bank = protective(s), predictor(s), metrics(s), bank_seed(s, role), flag_bank(s, role)
-        !python scripts/go1_collect_flagged_states.py --robot g1 --checkpoint-file {WALKER} --predictor-file {p} --metrics-file {m} --seed {bs} --capture-state-bank --capture-at-flag
-        assert _exit_code == 0, f"seed {s}: evaluation bank {role} failed (exit {_exit_code}) -- scroll up"
+        pr, bs, bank = protective(s), bank_seed(s, role), ensure_bank(s, role)
         extra = " ".join(f"--extra-policy {r}={policy(s, r)}" for r in REWARDS if r != "hullgrow") + f" --extra-policy original={original_sf(s)}"
         locked = ",".join(["protective"] + [r for r in REWARDS if r != "hullgrow"])
         !python scripts/go1_protective_compare.py --robot g1 --protective-checkpoint {pr} --walker-checkpoint {WALKER} --state-bank-file {bank} --seed {bs} --output {out} {extra} --locked-arms {locked}
@@ -490,7 +499,7 @@ The caption names the policy on screen. The four new policies run with the
 settle lock, the original SmallFall without it (as evaluated in F).
 """)
 code("""
-vbank = flag_bank(VIDEO_SEED, TEST_ROLE)
+vbank = ensure_bank(VIDEO_SEED, TEST_ROLE)   # re-collected if this session skipped the test
 V3 = {}
 for r, path, lock in [(r, policy(VIDEO_SEED, r), True) for r in REWARDS] + [("original", original_sf(VIDEO_SEED), False)]:
     label = "SmallFall: " + (f"{LABELS[r]} reward" if r in REWARDS else "original (ground-covered reward)")
