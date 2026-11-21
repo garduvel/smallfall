@@ -5308,3 +5308,20 @@ Fix (both builders): an `ensure_bank(s, role)` helper restores a bank from
 Drive or collects it again from its fixed bank seed and saves it; E1, F1 and
 the video part use it. Results are unchanged (the videos only replay the
 bank; the test bank is still evaluated once, in E1).
+
+## 2026-11-21 -- Go1 e2e1: six seeds (0-5), all seven policies
+
+Run on Colab with `SEEDS = (0, 1, 2, 3, 4, 5)` (six, not the five planned),
+commit eb5c25d, GPU NVIDIA L4 (not A100), walker reused from `multiseed1`.
+Archive `archive/go1_end_to_end_e2e1_6seeds.zip`, unpacked in
+`outputs/go1_end_to_end/`. 9,069 paired falls. Median ground covered, mean
+± SD of the per-seed medians: hull growth 0.294 ± 0.024, hull area 0.302 ±
+0.020, centroid 0.328 ± 0.026, original SmallFall 0.363 ± 0.012, floor
+touched 0.377 ± 0.024, limp 0.476, walker 0.985 m. Below the original in
+6/6 seeds: hull growth, hull area (paired Wilcoxon, Holm); centroid 4/6;
+floor touched 1/6. Any-body peak force: hull growth / hull area / centroid
+about 740-750 N vs 979 N for the original (6/6 seeds); floor touched equal.
+Time to rest is about 0.15-0.2 s slower for hull growth / hull area (the
+pairwise "median A - B" column for time is in control steps of 0.02 s), but
+they come to rest more often (99.5-99.9% vs 91.2%). E2 test verdict PASS on
+all six seeds; predictor test AUPRC 0.83-0.87. Captioned videos rendered.
