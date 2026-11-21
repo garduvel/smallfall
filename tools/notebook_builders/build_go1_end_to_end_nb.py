@@ -428,7 +428,11 @@ for s in SEEDS:
         assert _exit_code == 0, f"seed {s}: compare failed (exit {_exit_code}) -- scroll up"
         save(out, npz(out))
     stats_json = recovery_stats(s)
-    if restore(stats_json):
+    # Reuse saved tests only if they were run on these exact falls (an older
+    # run's tests on re-collected banks hold a different fall count).
+    import numpy as np
+    n_now = sum(len(np.load(npz(eval_compare(s, role)))["protective__settled"]) for role in EVAL_ROLES)
+    if restore(stats_json) and json.load(open(stats_json))["n_falls"] == n_now:
         print(f"seed {s}: significance tests already done, skipping")
         continue
     seed_npz = " ".join(npz(eval_compare(s, role)) for role in EVAL_ROLES)

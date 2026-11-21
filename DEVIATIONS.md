@@ -5325,3 +5325,17 @@ Time to rest is about 0.15-0.2 s slower for hull growth / hull area (the
 pairwise "median A - B" column for time is in control steps of 0.02 s), but
 they come to rest more often (99.5-99.9% vs 91.2%). E2 test verdict PASS on
 all six seeds; predictor test AUPRC 0.83-0.87. Captioned videos rendered.
+
+## 2026-11-21 -- End-to-end notebooks: per-seed tests are redone when their falls changed (fix)
+
+Colab, G1 `e2e1` seven-policy rerun: F2 stopped with `[multiseed] run 0: the
+per-fall files hold 1510 falls but its saved tests used 1520`. F1 restored
+seed 0's significance tests (`recovery_stats.json`) from the first `e2e1`
+run, which were computed on that run's evaluation banks. Those banks were
+never saved to Drive, so the rerun re-collected them (MuJoCo Warp is not
+deterministic: 1,510 falls instead of 1,520) and replayed all seven policies
+on the new ones. The multiseed script's consistency check caught the
+mismatch, as intended. Fix (both builders): F1 reuses saved tests only if
+their `n_falls` equals the fall count of the current evaluation files;
+otherwise it reruns them on the current files. No result is mixed across
+banks: tests, box plots and seven-policy stats all use the same falls.
