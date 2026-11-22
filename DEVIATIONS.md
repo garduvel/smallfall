@@ -5339,3 +5339,22 @@ mismatch, as intended. Fix (both builders): F1 reuses saved tests only if
 their `n_falls` equals the fall count of the current evaluation files;
 otherwise it reruns them on the current files. No result is mixed across
 banks: tests, box plots and seven-policy stats all use the same falls.
+
+## 2026-11-21 -- G1 e2e1: six seeds (0-5), all seven policies
+
+Run on Colab (L4), `SEEDS = (0, 1, 2, 3, 4, 5)`, walker `walker2` reused;
+seeds 0-2 kept their earlier walker, predictors and hull-growth policies,
+seeds 3-5 ran from Part B. Per-seed tests were redone by hand in the session
+(the open notebook predated the 99acee6 fix). The run's notebook copy was
+saved to GitHub from Colab (f9a46bb, "Created using Colab"); the committed
+notebook is restored from its builder. Archive
+`archive/g1_end_to_end_e2e1_6seeds.zip`, unpacked in `outputs/g1_end_to_end/`.
+9,102 paired falls. Median ground covered, mean ± SD of per-seed medians:
+hull growth 0.550 ± 0.030, hull area 0.569 ± 0.022, centroid 0.619 ± 0.013,
+original SmallFall 0.655 ± 0.024, floor touched 0.655 ± 0.029, limp 0.887,
+walker 1.44 m. Below the original in 6/6 seeds: hull growth, hull area;
+centroid 5/6 (Holm p mean 0.14); floor touched no different. Hull growth is
+also below hull area in 5/6. All four new policies rest in 100% of falls vs
+87.6% for the original. Any-body force 1,270-1,400 N vs 1,480 (original),
+2,400 (limp). E2 test verdict PASS on 6/6 seeds; Gates 6 and 7 flags pass;
+predictor AUPRC 0.933-0.949.
