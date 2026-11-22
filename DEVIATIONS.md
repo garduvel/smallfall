@@ -5358,3 +5358,24 @@ also below hull area in 5/6. All four new policies rest in 100% of falls vs
 87.6% for the original. Any-body force 1,270-1,400 N vs 1,480 (original),
 2,400 (limp). E2 test verdict PASS on 6/6 seeds; Gates 6 and 7 flags pass;
 predictor AUPRC 0.933-0.949.
+
+## 2026-11-21 -- Public docs updated; local folders reorganized
+
+User: "update public docs and organize the local folder system".
+Docs: new `docs/SMALLFALL_RESULTS.md` (both robots, six seeds, seven
+policies; figures copied to `docs/figures/e2e1/`); `README.md` rewritten for
+both robots; `docs/PROJECT_NOTES.md` section 15 added; `notebooks/README.md`
+and `CLAUDE.md` updated. Local, gitignored folders were reorganized by
+project, moves only (nothing deleted): `outputs/{cartpole,go1,g1}/` and
+`archive/{cartpole,go1,g1,code_snapshots,superseded}/`, with indexes
+`outputs/README.md` and `archive/README.md`. Path map for entries above this
+one: `outputs/go1_end_to_end` -> `outputs/go1/end_to_end`;
+`outputs/g1_end_to_end` -> `outputs/g1/end_to_end`; `outputs/g1_<x>` ->
+`outputs/g1/<x>`; `outputs/multiseed1` -> `outputs/go1/multiseed1`; loose
+`outputs/go1_*` files, `outputs/{confirm_seed2,gate7_flagstate,handoff_eval,
+heldout_round7,limp_baseline,round8,videos}` and
+`outputs/stats/{predictor,recovery_exploratory_seed4}` ->
+`outputs/go1/stages/`; `outputs/stats/policies_round3_bank8` ->
+`outputs/g1/round3/stats_policies_bank8`; loose cartpole files ->
+`outputs/cartpole/`; `archive/<file>` -> `archive/<project>/<file>`
+(superseded/stale files -> `archive/superseded/`).

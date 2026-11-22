@@ -395,7 +395,8 @@ become.
 Everything above is the specified cartpole experiment. This section is a
 later extension to a Unitree Go1 quadruped in mjlab; it is not covered by
 `CLAUDE.md`, and every decision is logged in `DEVIATIONS.md`. **All Go1
-results are single-seed (seed 0).**
+results in this section are single-seed (seed 0);** the multi-seed and
+seven-policy results for both robots are in section 15.
 
 Pipeline: a walking policy, a 150 N push that makes it fall, the same
 termination predictor trained on those falls, a separate protective
@@ -575,4 +576,40 @@ on the ground).
   Gate 7 ablation replays captured flag-moment states instead, without
   further pushes. That replay covers only flags that led to a real fall.
 - **Ground covered is our own metric,** not from the fall literature.
-- G1 humanoid: only the task scaffolding exists; no G1 results are reported.
+- G1 humanoid: only the task scaffolding existed when this section was
+  written; the G1 port and the six-seed results are in section 15.
+
+---
+
+## 15. Phase 3: G1 humanoid port and four new SmallFall rewards (six seeds)
+
+Full results: [`SMALLFALL_RESULTS.md`](SMALLFALL_RESULTS.md). Decisions, in
+order, are in `DEVIATIONS.md` (2026-10-03 onward).
+
+**Multi-seed Go1 (`multiseed1`, five runs).** The round-8 SmallFall replayed
+against walker and limp in five independent runs: ground covered 0.37 m vs
+1.00 (walker) and 0.48 (limp), significant in 5/5 runs
+([`GO1_MULTISEED_REPORT.md`](GO1_MULTISEED_REPORT.md)).
+
+**G1 port (2026-11).** Same pipeline on the Unitree G1 humanoid: a 10,000
+iteration walker, a 200 N torso push, the same predictor design, SmallFall
+with calibrated reward weights. Then, on the G1:
+
+1. *Fall-size measure ablation:* ten ways to measure how small a fall is
+   (`protective/fall_size.py`), applied to existing policies.
+2. *Reward ablation:* ten SmallFall policies, each rewarded on one measure.
+   The best four: hull growth, centroid travel, hull area, floor touched.
+3. *Round 2:* hull growth beat the original ground-covered reward.
+4. *Round 3, settle lock* (`protective/settle_lock.py`): the joints hold their
+   pose once the robot is low and still, or after a fixed time. Best: train
+   without the lock, run with it (training with it made policies lean on the
+   timer).
+
+**Final runs (`e2e1`, six seeds per robot).** `go1_end_to_end.ipynb` and
+`g1_end_to_end.ipynb` train, per seed, the four new policies (600 iterations,
+lock at run time, timer 1.8 s Go1 / 3.0 s G1) and the original SmallFall, and
+replay all seven policies on about 1,500 fresh flagged falls. Median ground
+covered, hull growth vs original: Go1 0.294 vs 0.363 m, G1 0.550 vs 0.655 m,
+lower in 6/6 seeds on both robots; the new policies come to rest in 99-100%
+of falls. The pre-registered test passed in 6/6 seeds on both robots.
+

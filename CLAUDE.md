@@ -27,19 +27,22 @@ Rules from it that apply to all work here:
 - Labelling, episode-level splits, and "the test split is touched once" are
   non-negotiable (spec sections 7.4, 7.5, 8.3).
 
-## 2. Go1 fall pipeline (phase 2, outside the cartpole spec)
+## 2. SmallFall fall pipeline, Go1 and G1 (outside the cartpole spec)
 
 Walker -> 150 N push -> fall predictor -> protective "small-fall" policy ->
 hand-off. Not covered by the spec; every decision and result is in
 `DEVIATIONS.md` (append-only, newest at the bottom) and summarized in
-`docs/PROJECT_NOTES.md` section 14; the five-run results are in
-`docs/GO1_MULTISEED_REPORT.md`. `README.md` is a short public overview.
+`docs/PROJECT_NOTES.md` sections 14-15. Final results (both robots, six
+seeds, seven policies): `docs/SMALLFALL_RESULTS.md`; the earlier five-run
+Go1 study: `docs/GO1_MULTISEED_REPORT.md`. `README.md` is a short public overview.
 Older references to "README.md S<n>" (in `DEVIATIONS.md` and code comments)
 mean section `<n>` of `docs/PROJECT_NOTES.md`, the former README.
 
 - Code: `src/cartpole_term/{go1,protective,common}/`, `scripts/go1_*.py`,
-  `scripts/robot_*.py`. G1 (`g1/`) is scaffolding only.
-- One notebook for the whole pipeline: `notebooks/go1_end_to_end.ipynb`.
+  `scripts/robot_*.py`; G1 specifics in `g1/` and `common/robot_profile.py`.
+- One notebook per robot for the whole pipeline: `notebooks/go1_end_to_end.ipynb`,
+  `notebooks/g1_end_to_end.ipynb` (built by `tools/notebook_builders/`; edit the
+  builder, never the notebook, and never "Save in GitHub" from Colab).
   `notebooks/README.md` says what every other notebook is for.
 - Evaluation rule used throughout: fix the pass rule in `DEVIATIONS.md` before
   the data exists, keep train / selection / test fall banks separate (one seed
@@ -52,9 +55,11 @@ mean section `<n>` of `docs/PROJECT_NOTES.md`, the former README.
 - **Here (Chromebook Linux container):** no GPU, no AVX, so MuJoCo cannot run.
   Pure-torch logic is unit-tested with mjlab stubbed:
   `.venv/bin/python -m pytest -q tests`. Run everything that can run here.
-- **Colab (A100):** training, evaluation, rendering. Work is handed over as a
-  notebook under `notebooks/` plus one upload folder under `colab_uploads/`;
+- **Colab (A100/L4):** training, evaluation, rendering. Notebooks clone the
+  public repo (older ones used an upload folder under `colab_uploads/`);
   results come back as one zip dropped in the repo root, which is then
-  unpacked under `outputs/` and archived under `archive/`.
+  unpacked under `outputs/<project>/` and archived under `archive/<project>/`
+  (project = `cartpole`, `go1`, `g1`; indexes in `outputs/README.md` and
+  `archive/README.md`, local only).
 - `cartpole_term_code.zip` (repo root) is what notebooks upload; rebuild it
   after any change under `src/` or `scripts/`.

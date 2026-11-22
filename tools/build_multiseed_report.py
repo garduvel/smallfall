@@ -2,7 +2,7 @@
 figures, from the run folder's own result files (nothing is re-simulated).
 
     .venv/bin/python tools/build_multiseed_report.py \
-        --run-dir outputs/multiseed1 --out docs/GO1_MULTISEED_REPORT.md
+        --run-dir outputs/go1/multiseed1 --out docs/GO1_MULTISEED_REPORT.md
 
 Figures go next to the report under figures/<run name>/.
 """
